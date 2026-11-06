@@ -52,7 +52,7 @@ namespace BilliardsGame.Network.Abstractions
         /// <param name="relayHost">Relay server address.</param>
         /// <param name="relayPort">Relay server TCP port.</param>
         /// <param name="timeoutMs">Timeout in milliseconds.</param>
-        Task<bool> HostViaRelayAsync(string relayHost, int relayPort = 7777, int timeoutMs = 5000);
+        Task<bool> HostViaRelayAsync(string relayHost, int relayPort = 7777, int timeoutMs = 15000);
 
         /// <summary>
         /// Asynchronously connects to the Mikrus Relay Server and joins an existing room using a 5-digit code.
@@ -61,7 +61,7 @@ namespace BilliardsGame.Network.Abstractions
         /// <param name="relayPort">Relay server TCP port.</param>
         /// <param name="roomCode">5-digit room code.</param>
         /// <param name="timeoutMs">Timeout in milliseconds.</param>
-        Task<bool> JoinViaRelayAsync(string relayHost, int relayPort, string roomCode, int timeoutMs = 5000);
+        Task<bool> JoinViaRelayAsync(string relayHost, int relayPort, string roomCode, int timeoutMs = 15000);
 
         /// <summary>
         /// Asynchronously attempts to establish a client TCP connection to a remote host.
@@ -137,5 +137,10 @@ namespace BilliardsGame.Network.Abstractions
         /// Event invoked when authoritative game state transition is received from host.
         /// </summary>
         event Action<TurnStatePacket>? OnTurnStateReceived;
+
+        /// <summary>
+        /// Event invoked when 8-ball target pocket call is received from the remote player.
+        /// </summary>
+        event Action<CallPocketPacket>? OnCallPocketReceived;
     }
 }

@@ -182,7 +182,7 @@ namespace BilliardsGame.Network.Tests
         }
 
         /// <summary>
-        /// Validates that TurnStatePacket serializes complete domain progression metrics, score counters, and notification semantics.
+        /// Validates that TurnStatePacket serializes complete domain progression metrics, score counters, notification semantics, and target pocket index.
         /// </summary>
         [Fact]
         public void SerializeAndDeserialize_TurnStatePacket_PreservesValues()
@@ -197,7 +197,8 @@ namespace BilliardsGame.Network.Tests
                 14.2f,
                 "FOUL: Time Out",
                 NotificationType.Foul,
-                null);
+                null,
+                4);
 
             byte[] bytes = PacketSerializer.Serialize(NetworkPacketType.TurnState, original);
 
@@ -218,6 +219,35 @@ namespace BilliardsGame.Network.Tests
             Assert.Equal("FOUL: Time Out", result.NotificationMessage);
             Assert.Equal(NotificationType.Foul, result.NotificationType);
             Assert.Null(result.WinnerId);
+            Assert.Equal(4, result.TargetPocketIndex);
+        }
+
+        /// <summary>
+        /// Validates that TurnStatePacket with null target pocket index round-trips correctly.
+        /// </summary>
+        [Fact]
+        public void SerializeAndDeserialize_TurnStatePacket_NullTargetPocket_PreservesNull()
+        {
+            var original = new TurnStatePacket(
+                GameState.PlayerTurn,
+                1,
+                0,
+                0,
+                null,
+                null,
+                30.0f,
+                string.Empty,
+                NotificationType.Info,
+                null,
+                null);
+
+            byte[] bytes = PacketSerializer.Serialize(NetworkPacketType.TurnState, original);
+
+            bool success = PacketSerializer.TryDeserialize(bytes, bytes.Length, out var type, out var packet, out int consumed);
+
+            Assert.True(success);
+            var result = Assert.IsType<TurnStatePacket>(packet);
+            Assert.Null(result.TargetPocketIndex);
         }
 
         /// <summary>
@@ -311,23 +341,38 @@ namespace BilliardsGame.Network.Tests
         }
 
         /// <summary>
-        /// Validates that encountering an unknown packet type consumes the frame and returns true with a null packet payload,
-        /// ensuring the stream reader advances its buffer rather than entering an infinite parsing loop.
+        /// Verifies that an unmapped packet type identifier triggers an InvalidDataException.
         /// </summary>
         [Fact]
-        public void TryDeserialize_UnknownPacketType_ConsumesFrameAndReturnsNullPayload()
+        public void TryDeserialize_UnknownPacketType_ThrowsInvalidDataException()
         {
-            // Construct a valid length frame (4 bytes header + 1 byte unknown type + 4 bytes dummy payload)
-            byte[] frame = new byte[9];
-            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(0, 4), 5); // frameDataLength = 5
-            frame[4] = 255; // Unknown packet type discriminator
+            byte[] buffer = new byte[5];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(0, 4), 1);
+            buffer[4] = 250; // Undefined packet type byte
 
-            bool success = PacketSerializer.TryDeserialize(frame, frame.Length, out var type, out var packet, out int consumed);
+            Assert.Throws<InvalidDataException>(() =>
+            {
+                PacketSerializer.TryDeserialize(buffer, buffer.Length, out _, out _, out _);
+            });
+        }
+
+        /// <summary>
+        /// Validates that CallPocketPacket serializes and deserializes the targeted pocket index correctly.
+        /// </summary>
+        [Fact]
+        public void SerializeAndDeserialize_CallPocketPacket_PreservesValues()
+        {
+            var original = new CallPocketPacket(3);
+            byte[] bytes = PacketSerializer.Serialize(NetworkPacketType.CallPocket, original);
+
+            bool success = PacketSerializer.TryDeserialize(bytes, bytes.Length, out var type, out var packet, out int consumed);
 
             Assert.True(success);
-            Assert.Equal((NetworkPacketType)255, type);
-            Assert.Null(packet);
-            Assert.Equal(9, consumed);
+            Assert.Equal(NetworkPacketType.CallPocket, type);
+            Assert.Equal(bytes.Length, consumed);
+
+            var result = Assert.IsType<CallPocketPacket>(packet);
+            Assert.Equal(3, result.PocketIndex);
         }
     }
 }

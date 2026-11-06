@@ -1,3 +1,4 @@
+using System.Numerics;
 ﻿using System;
 using System.Collections.Generic;
 using Moq;
@@ -386,6 +387,170 @@ namespace BilliardsGame.Core.Tests
             Assert.Equal(BallType.Striped, gm.Player2.AssignedType);
             Assert.Equal(11.4f, gm.RemainingTurnTime);
             Assert.Equal("Great Shot!", gm.NotificationMessage);
+        }
+
+        /// <summary>
+        /// Validates that repeating the same notification in ApplyAuthoritativeState does not reset the decaying notification timer,
+        /// preventing flickering and visual loops across periodic network updates.
+        /// </summary>
+        [Fact]
+        public void ApplyAuthoritativeState_RepeatedNotification_DoesNotResetTimer()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            // First packet with notification establishes 3.0s timer
+            gm.ApplyAuthoritativeState(
+                GameState.PlayerTurn, 1, 0, 0, null, null, 15f,
+                notification: "FOUL: Scratch", notificationType: NotificationType.Foul, winnerId: null);
+
+            Assert.Equal("FOUL: Scratch", gm.NotificationMessage);
+            Assert.Equal(3.0f, gm.NotificationTimer);
+
+            // Time progresses by 1.0s on client
+            gm.UpdateLogic(1.0f, isAuthoritative: false);
+            Assert.Equal(2.0f, gm.NotificationTimer);
+
+            // Subsequent periodic packet with the SAME notification must NOT reset timer to 3.0s
+            gm.ApplyAuthoritativeState(
+                GameState.PlayerTurn, 1, 0, 0, null, null, 14.5f,
+                notification: "FOUL: Scratch", notificationType: NotificationType.Foul, winnerId: null);
+
+            Assert.Equal(2.0f, gm.NotificationTimer);
+            Assert.Equal("FOUL: Scratch", gm.NotificationMessage);
+        }
+
+        /// <summary>
+        /// Validates that an empty notification string in ApplyAuthoritativeState clears the active notification on the client.
+        /// </summary>
+        [Fact]
+        public void ApplyAuthoritativeState_EmptyNotification_ClearsNotification()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            gm.ApplyAuthoritativeState(
+                GameState.PlayerTurn, 1, 0, 0, null, null, 15f,
+                notification: "FOUL: Scratch", notificationType: NotificationType.Foul, winnerId: null);
+
+            Assert.Equal("FOUL: Scratch", gm.NotificationMessage);
+
+            // Host clears notification
+            gm.ApplyAuthoritativeState(
+                GameState.PlayerTurn, 1, 0, 0, null, null, 12f,
+                notification: "", notificationType: NotificationType.Info, winnerId: null);
+
+            Assert.Equal(string.Empty, gm.NotificationMessage);
+            Assert.Equal(0f, gm.NotificationTimer);
+        }
+
+        /// <summary>
+        /// Validates that releasing the mouse button while overheated in ChargingShot resets cue charge, returns to PlayerTurn,
+        /// and does NOT execute a shot or transition to SimulatingBalls (preventing accidental fouls).
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_WhenChargingShotAndOverheated_ReleasingMouseCancelsShotAndReturnsToPlayerTurn()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            cueMock.SetupGet(c => c.IsOverheated).Returns(true);
+            inputMock.SetupGet(i => i.WasLeftMouseReleased).Returns(true);
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            // Force state to ChargingShot
+            inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(true);
+            gm.UpdateLogic(0.016f); // Transitions to ChargingShot
+            Assert.Equal(GameState.ChargingShot, gm.CurrentState);
+
+            inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(false);
+
+            // In ChargingShot, mouse release occurs while overheated
+            gm.UpdateLogic(0.016f);
+
+            // Assert that shot was never executed, ResetCharge was NOT called (cooling animation must play out), and state remains ChargingShot
+            cueMock.Verify(c => c.ExecuteShot(It.IsAny<IPhysicsBody>()), Times.Never);
+            cueMock.Verify(c => c.ResetCharge(), Times.Never);
+            Assert.Equal(GameState.ChargingShot, gm.CurrentState);
+
+            // When cooling finishes inside UpdateOverheat (IsOverheated becomes false), state transitions back to PlayerTurn
+            cueMock.Setup(c => c.UpdateOverheat(It.IsAny<float>())).Callback(() =>
+            {
+                cueMock.SetupGet(c => c.IsOverheated).Returns(false);
+            });
+            gm.UpdateLogic(0.016f);
+            Assert.Equal(GameState.PlayerTurn, gm.CurrentState);
+        }
+
+        /// <summary>
+        /// Validates that clicking within the extended pocket click radius (e.g., 35px from a 24px pocket) successfully selects the target pocket.
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_WhenCallingPocket_ClickWithinExtendedRadius_SelectsPocket()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var mockPocket = new Mock<IPocket>();
+            mockPocket.SetupGet(p => p.Position).Returns(new Vector2(200f, 200f));
+            mockPocket.SetupGet(p => p.Radius).Returns(24f);
+
+            physicsMock.Setup(p => p.GetPockets()).Returns(new List<IPocket> { mockPocket.Object });
+
+            // Click at (230, 200) -> distance is 30px (which is > 24px radius, but within extended click tolerance of 45px)
+            inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(true);
+            inputMock.SetupGet(i => i.MouseWorldPosition).Returns(new Vector2(230f, 200f));
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            // Set state to CallingPocket
+            gm.ApplyAuthoritativeState(GameState.CallingPocket, 1, 7, 0, null, null, 15f, notification: "", notificationType: NotificationType.Info, winnerId: null);
+            Assert.Equal(GameState.CallingPocket, gm.CurrentState);
+
+            gm.UpdateLogic(0.016f, isAuthoritative: true);
+
+            // Assert pocket was selected and state transitioned to PlayerTurn
+            Assert.Equal(mockPocket.Object, gm.TargetPocket);
+            Assert.Equal(GameState.PlayerTurn, gm.CurrentState);
+        }
+
+        [Fact]
+        public void UpdateLogic_WhenCallingPocket_TimerDecrementsAndTriggersTimeout()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            gm.ApplyAuthoritativeState(GameState.CallingPocket, 1, 7, 0, null, null, 2.0f, notification: "", notificationType: NotificationType.Info, winnerId: null);
+            Assert.Equal(GameState.CallingPocket, gm.CurrentState);
+            Assert.Equal(2.0f, gm.RemainingTurnTime);
+
+            // Step 1: Decrement timer
+            gm.UpdateLogic(0.5f, isAuthoritative: true);
+            Assert.Equal(1.5f, gm.RemainingTurnTime, 2);
+            Assert.Equal(GameState.CallingPocket, gm.CurrentState);
+
+            // Step 2: Timeout expiration triggers foul and switches turn to opponent with BallInHand
+            gm.UpdateLogic(1.6f, isAuthoritative: true);
+            Assert.Equal(GameState.BallInHand, gm.CurrentState);
+            Assert.Equal(15.0f, gm.RemainingTurnTime);
+            Assert.Equal(2, gm.ActivePlayer.Id);
         }
     }
 }

@@ -55,6 +55,19 @@ namespace BilliardsGame.Interfaces
         void PlaySFX(string name, float volume = 1.0f);
 
         /// <summary>
+        /// Halts playback of the specified sound effect if it is currently playing.
+        /// </summary>
+        /// <param name="name">The alias of the loaded sound effect.</param>
+        void StopSFX(string name);
+
+        /// <summary>
+        /// Checks whether the specified sound effect is actively playing.
+        /// </summary>
+        /// <param name="name">The alias of the loaded sound effect.</param>
+        /// <returns>True if the sound is currently playing; otherwise false.</returns>
+        bool IsSFXPlaying(string name);
+
+        /// <summary>
         /// Plays a dynamic collision sound scaled by the impact force.
         /// </summary>
         /// <param name="impactForce">The magnitude of the physical impact.</param>

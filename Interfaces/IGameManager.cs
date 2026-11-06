@@ -90,7 +90,8 @@ namespace BilliardsGame.Interfaces
         /// Propagates frame delta updates through domain logic, ticking active banners, evaluating decision timers, and triggering timeout fouls.
         /// </summary>
         /// <param name="deltaTime">Time elapsed in seconds since the previous update frame.</param>
-        void UpdateLogic(float deltaTime);
+        /// <param name="isAuthoritative">If true (default), runs authoritative referee rules and turn timeouts. If false (e.g. client in online match), only ticks visual presentation timers.</param>
+        void UpdateLogic(float deltaTime, bool isAuthoritative = true);
 
         /// <summary>
         /// Resets scoring, cleans up previous state structures, and initializes a fresh match instance.
@@ -127,8 +128,7 @@ namespace BilliardsGame.Interfaces
         void ResetToMenu();
 
         /// <summary>
-        /// Instantly concludes the match awarding forfeit victory to the specified player (e.g. when opponent disconnects).
-        /// </summary>
+        /// Instantly concludes the match awarding forfeit victory to the specified player (e.g. when opponent disconnects).</param>
         /// <param name="winnerPlayerId">Identifier of the victorious remaining player (1 or 2).</param>
         /// <param name="reason">Human-readable explanation of the forfeit victory.</param>
         void ConcludeMatchByForfeit(int winnerPlayerId, string reason);
@@ -136,6 +136,22 @@ namespace BilliardsGame.Interfaces
         /// <summary>
         /// Synchronizes authoritative game state directly onto client instance from host network packet.
         /// </summary>
+        void ExecuteRemoteShot(Vector2 impulse, float power);
+
+        /// <summary>
+        /// Synchronizes authoritative game state directly onto client instance from host network packet.
+        /// </summary>
+        /// <param name="state">Domain lifecycle state.</param>
+        /// <param name="activePlayerId">Active player ID.</param>
+        /// <param name="p1Score">Score of Player 1.</param>
+        /// <param name="p2Score">Score of Player 2.</param>
+        /// <param name="p1Type">Assigned ball type for Player 1.</param>
+        /// <param name="p2Type">Assigned ball type for Player 2.</param>
+        /// <param name="remainingTurnTime">Authoritative remaining turn time in seconds.</param>
+        /// <param name="notification">Notification banner text.</param>
+        /// <param name="notificationType">Notification category.</param>
+        /// <param name="winnerId">Winner player ID if game ended.</param>
+        /// <param name="targetPocketIndex">Targeted pocket index for 8-ball sink if nominated; otherwise null.</param>
         void ApplyAuthoritativeState(
             GameState state,
             int activePlayerId,
@@ -146,6 +162,7 @@ namespace BilliardsGame.Interfaces
             float remainingTurnTime,
             string notification,
             NotificationType notificationType,
-            int? winnerId);
+            int? winnerId,
+            int? targetPocketIndex = null);
     }
 }

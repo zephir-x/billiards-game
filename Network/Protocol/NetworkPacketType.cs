@@ -44,6 +44,11 @@
         /// <summary>
         /// Control packet exchanged with the Relay Server for 5-digit room registration and peer pairing.
         /// </summary>
-        RelayControl = 8
+        RelayControl = 8,
+
+        /// <summary>
+        /// Designates the target pocket chosen for potting the 8-ball during match point.
+        /// </summary>
+        CallPocket = 9
     }
 }

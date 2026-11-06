@@ -59,6 +59,11 @@ namespace BilliardsGame.Network.Protocol
         public int? WinnerId { get; set; }
 
         /// <summary>
+        /// Zero-based index of the nominated target pocket for sinking the 8-ball (0 to 5) or null.
+        /// </summary>
+        public int? TargetPocketIndex { get; set; } = null;
+
+        /// <summary>
         /// Parameterless constructor required for standard serialization pipelines.
         /// </summary>
         public TurnStatePacket() { }
@@ -76,6 +81,7 @@ namespace BilliardsGame.Network.Protocol
         /// <param name="notification">Notification banner text.</param>
         /// <param name="notificationType">Notification category.</param>
         /// <param name="winnerId">Winner player ID if game ended.</param>
+        /// <param name="targetPocketIndex">Targeted pocket index for 8-ball sink if nominated; otherwise null.</param>
         public TurnStatePacket(
             GameState state,
             int activePlayerId,
@@ -86,7 +92,8 @@ namespace BilliardsGame.Network.Protocol
             float remainingTurnTime,
             string notification,
             NotificationType notificationType,
-            int? winnerId)
+            int? winnerId,
+            int? targetPocketIndex = null)
         {
             State = state;
             ActivePlayerId = activePlayerId;
@@ -98,6 +105,7 @@ namespace BilliardsGame.Network.Protocol
             NotificationMessage = notification;
             NotificationType = notificationType;
             WinnerId = winnerId;
+            TargetPocketIndex = targetPocketIndex;
         }
     }
 }

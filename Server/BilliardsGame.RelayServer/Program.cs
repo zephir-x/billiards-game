@@ -187,6 +187,7 @@ namespace BilliardsGame.RelayServer
                 AssignedPlayerId = 1
             });
             await hostStream.WriteAsync(responseFrame, token);
+            await hostStream.FlushAsync(token);
         }
 
         /// <summary>
@@ -230,6 +231,7 @@ namespace BilliardsGame.RelayServer
                 AssignedPlayerId = 2
             });
             await guestStream.WriteAsync(guestJoinFrame, token);
+            await guestStream.FlushAsync(token);
 
             // Notify both peers match is ready.
             byte[] matchReadyFrame = PacketSerializer.Serialize(NetworkPacketType.RelayControl, new RelayControlPacket
@@ -238,7 +240,9 @@ namespace BilliardsGame.RelayServer
                 RoomCode = cleanCode
             });
             await hostStream.WriteAsync(matchReadyFrame, token);
+            await hostStream.FlushAsync(token);
             await guestStream.WriteAsync(matchReadyFrame, token);
+            await guestStream.FlushAsync(token);
 
             // Launch concurrent bidirectional raw byte piping between Host and Guest.
             _ = Task.Run(async () =>

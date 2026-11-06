@@ -207,8 +207,10 @@ namespace BilliardsGame.Core
             if (CurrentState == GameState.CallingPocket)
             {
                 TargetPocket = pocket;
+                _cueController.ResetCharge();
                 CurrentState = GameState.PlayerTurn;
                 RemainingTurnTime = 15.0f;
+                OnStateTransition?.Invoke();
             }
         }
 
@@ -257,7 +259,7 @@ namespace BilliardsGame.Core
         }
 
         /// <inheritdoc />
-        public void UpdateLogic(float deltaTime)
+        public void UpdateLogic(float deltaTime, bool isAuthoritative = true)
         {
             // Actively tick active UI banners completely decoupled from rendering pipeline frame-rates.
             if (NotificationTimer > 0f)
@@ -266,16 +268,26 @@ namespace BilliardsGame.Core
                 if (NotificationTimer <= 0f) NotificationMessage = "";
             }
 
-            // Turn Countdown Timer: active strictly in decision/aiming states
-            if (CurrentState == GameState.PlayerTurn || CurrentState == GameState.ChargingShot || CurrentState == GameState.BallInHand)
+            // Smoothly decrement turn countdown timer frame-by-frame on BOTH host and client
+            // so the timer displays at a silky 60fps instead of chopping on periodic packets.
+            if (CurrentState == GameState.PlayerTurn || CurrentState == GameState.ChargingShot || CurrentState == GameState.BallInHand || CurrentState == GameState.CallingPocket)
             {
                 RemainingTurnTime -= deltaTime;
                 if (RemainingTurnTime <= 0f)
                 {
                     RemainingTurnTime = 0f;
-                    HandleTimeout();
-                    return;
+                    if (isAuthoritative)
+                    {
+                        HandleTimeout();
+                        return;
+                    }
                 }
+            }
+
+            // In non-authoritative client mode, all referee evaluations and state transitions are suppressed.
+            if (!isAuthoritative)
+            {
+                return;
             }
 
             // Core State Machine matching explicitly determined active game lifecycle sequential phases
@@ -287,13 +299,14 @@ namespace BilliardsGame.Core
                 case GameState.CallingPocket:
                 {
                     // Waits specifically for a valid pocket designation acknowledging Match Point.
-                    if (_inputProvider.WasLeftMousePressed)
+                    if (_inputProvider.WasLeftMousePressed || _inputProvider.WasLeftMouseReleased)
                     {
                         var mousePos = _inputProvider.MouseWorldPosition;
                         var pockets = _physicsEngine.GetPockets();
                         foreach (var pocket in pockets)
                         {
-                            if ((pocket.Position - mousePos).LengthSquared() < pocket.Radius * pocket.Radius)
+                            float clickRadius = MathF.Max(pocket.Radius * 1.85f, 45f);
+                            if ((pocket.Position - mousePos).LengthSquared() <= clickRadius * clickRadius)
                             {
                                 SelectTargetPocket(pocket);
                                 break;
@@ -348,7 +361,13 @@ namespace BilliardsGame.Core
 
                     var cueBall = GetCueBall();
 
-                    if (!_cueController.IsOverheated)
+                    if (_cueController.IsOverheated)
+                    {
+                        // Obligatory penalty cooling: mouse release does NOT execute a shot, and does NOT bypass cooldown.
+                        // The cue stick slowly retracts its power back to 0.0 over time via UpdateOverheat until Power reaches 0.
+                        break;
+                    }
+                    else
                     {
                         if (_inputProvider.IsLeftMouseDown)
                         {
@@ -365,7 +384,7 @@ namespace BilliardsGame.Core
                         {
                             _physicsEngine.ResetStrokeData();
 
-                            if (cueBall != null)
+                            if (cueBall != null && _cueController.Power > 0f)
                             {
                                 _cueController.ExecuteShot(cueBall);
                             }
@@ -537,9 +556,29 @@ namespace BilliardsGame.Core
             Winner = (winnerPlayerId == 1) ? _player1 : _player2;
             CurrentState = GameState.GameOver;
             _cueController.ResetCharge();
-            SetNotification(reason, NotificationType.Info, 5.0f);
+            NotificationMessage = reason;
+            NotificationType = NotificationType.Info;
+            NotificationTimer = 5.0f;
             OnGameOver?.Invoke();
             OnStateTransition?.Invoke();
+        }
+
+        /// <inheritdoc />
+        public void ExecuteRemoteShot(Vector2 impulse, float power)
+        {
+            var cueBall = GetCueBall();
+            if (cueBall != null)
+            {
+                _physicsEngine.ResetStrokeData();
+                cueBall.ApplyImpulse(impulse);
+                _cueController.ResetCharge();
+                var prev_bodies = _physicsEngine.GetBodies();
+                _ballsAtStartOfTurn = (prev_bodies != null ? prev_bodies : Array.Empty<IPhysicsBody>())
+                    .OfType<ICircleBody>()
+                    .ToList();
+                CurrentState = GameState.SimulatingBalls;
+                OnStateTransition?.Invoke();
+            }
         }
 
         /// <inheritdoc />
@@ -553,8 +592,11 @@ namespace BilliardsGame.Core
             float remainingTurnTime,
             string notification,
             NotificationType notificationType,
-            int? winnerId)
+            int? winnerId,
+            int? targetPocketIndex = null)
         {
+            bool transitioningToGameOver = (state == GameState.GameOver && CurrentState != GameState.GameOver);
+
             CurrentState = state;
             ActivePlayer = (activePlayerId == 1) ? _player1 : _player2;
             _player1.Score = p1Score;
@@ -563,20 +605,56 @@ namespace BilliardsGame.Core
             _player2.AssignedType = p2Type;
             RemainingTurnTime = remainingTurnTime;
 
+            if (targetPocketIndex.HasValue && targetPocketIndex.Value >= 0)
+            {
+                var pockets = _physicsEngine.GetPockets()?.ToList();
+                if (pockets != null && targetPocketIndex.Value < pockets.Count)
+                {
+                    TargetPocket = pockets[targetPocketIndex.Value];
+                }
+                else
+                {
+                    TargetPocket = null;
+                }
+            }
+            else
+            {
+                TargetPocket = null;
+            }
+
             if (!string.IsNullOrEmpty(notification))
             {
-                NotificationMessage = notification;
-                NotificationType = notificationType;
-                NotificationTimer = 3.0f;
-                OnNotificationEvent?.Invoke(notificationType);
+                // Protect local match start banners from being overwritten by remote peer's banner
+                if (!notification.StartsWith("MATCH STARTED", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool isNewMessage = !string.Equals(NotificationMessage, notification, StringComparison.Ordinal);
+                    if (isNewMessage)
+                    {
+                        NotificationMessage = notification;
+                        NotificationType = notificationType;
+                        NotificationTimer = 3.0f;
+                        OnNotificationEvent?.Invoke(notificationType);
+                    }
+                }
+            }
+            else
+            {
+                // When host clears notification (empty string), clear it on client as well,
+                // unless client is currently displaying local MATCH STARTED notification.
+                if (!NotificationMessage.StartsWith("MATCH STARTED", StringComparison.OrdinalIgnoreCase))
+                {
+                    NotificationMessage = string.Empty;
+                    NotificationTimer = 0f;
+                }
             }
 
             if (winnerId.HasValue)
             {
                 Winner = (winnerId.Value == 1) ? _player1 : _player2;
-                if (CurrentState == GameState.GameOver)
+                if (transitioningToGameOver)
                 {
                     OnGameOver?.Invoke();
+                    OnStateTransition?.Invoke();
                 }
             }
         }

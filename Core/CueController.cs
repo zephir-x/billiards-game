@@ -89,6 +89,13 @@ namespace BilliardsGame.Core
         }
 
         /// <inheritdoc />
+        public void SetRemotePower(float power)
+        {
+            Power = Math.Clamp(power, 0f, 1f);
+            IsOverheated = false;
+        }
+
+        /// <inheritdoc />
         public void ExecuteShot(IPhysicsBody cueBall)
         {
             // Fully block execution if penalty flags are active.

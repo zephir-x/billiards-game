@@ -56,21 +56,23 @@ You don't need any programming knowledge or external runtimes to play the game!
 
 ### Quick Start
 1. **Download:** Go to the [Releases](../../releases) tab of this repository.
-2. **Extract:** Download the latest `2D_Billiards_Game.zip` and extract its contents anywhere on your PC.
+2. **Extract:** Download the latest `2D_Billiards_Game_v1.2.0.zip` (or `BilliardsGame-win-x64.zip`) and extract its contents anywhere on your PC.
 3. **Play:** Double-click `BilliardsGame.exe` and you are ready to play!
 
 ### Game Modes
 * **Play Online (1v1 Multiplayer):** 
   * **Host Match:** Generates a unique 5-digit room code (e.g. `48192`) through our dedicated relay server. Share this code with a friend!
-  * **Join Match:** Enter your friend's 5-digit room code and jump straight into the match with real-time aim and physics synchronization.
+  * **Join Match:** Enter your friend's 5-digit room code and jump straight into the match with real-time aim, pocket calling, and physics synchronization.
 * **Training (Hotseat Mode):** Play offline on a single screen to practice trick shots, bank shots, and break angles.
 
 ### Controls & Rules
-* **Aiming:** Move your cursor around the cue ball. An intelligent aim-assist dynamically visualizes trajectory guides proportional to your strike power.
+* **Aiming:** Move your cursor around the cue ball. An intelligent aim-assist dynamically visualizes trajectory guides proportional to your strike power (only visible on your turn).
 * **Shooting:** Click and hold the **Left Mouse Button** to pull back and charge your cue stick. Release to strike!
-* **Global Turn Countdown Timer:** Each player has strictly **30.0 seconds** per turn. An animated HUD badge flashes red when under 5 seconds. If the timer reaches zero, a **Time Out Foul** is awarded and your opponent receives **Ball in Hand**.
-* **Ball In Hand:** Following any foul (scratch, timeout, or illegal hit), you can pick up the white cue ball and place it anywhere on the table.
-* **8-Ball Rules:** Standard official rules apply. Claim your assigned group (Solids or Stripes), pocket all balls of your group, and pot the 8-Ball Black cleanly into a pocket to win.
+* **Overheat Penalty:** Holding the charge too long (over 1.0s) triggers an overheat penalty with a mandatory cooling animation preventing panic strikes.
+* **Global Turn Countdown Timer:** Each player has strictly **30.0 seconds** per turn. An integrated timer gauge pulses red under 5 seconds with an acoustic tick warning. If the timer reaches zero, a **Time Out Foul** is awarded and your opponent receives **Ball in Hand**.
+* **Ball In Hand:** Following any foul (scratch, timeout, or illegal hit), you can pick up the white cue ball and place it anywhere on the table (with live ghost preview for both players).
+* **Calling Pocket (8-Ball):** When attempting the match-winning 8-Ball pot, cleanly designate the target pocket with a single click, synchronized in real time to the opponent's screen.
+* **8-Ball Rules:** Standard official rules apply. Claim your assigned group (Solids or Stripes), pocket all balls of your group, and pot the 8-Ball Black cleanly into your called pocket to win.
 
 ---
 
@@ -101,11 +103,14 @@ sequenceDiagram
     Relay->>P1: AimSyncPacket
     P1->>Relay: PhysicsSyncPacket (60Hz Authoritative Coordinates)
     Relay->>P2: PhysicsSyncPacket
+    P2->>Relay: CallPocketPacket (8-Ball Target Pocket Sync)
+    Relay->>P1: CallPocketPacket
 ```
 
 ### Key Network Design Pillars:
 * **Dedicated High-Throughput Blind Relay:** The relay server (`Server/BilliardsGame.RelayServer`) acts as an in-memory pipeline. Once sockets are paired, bytes are piped transparently without JSON serialization overhead, minimizing CPU usage and latency.
 * **Authoritative Physics Host:** Host (Player 1) executes the deterministic 480Hz physics simulation and streams 60Hz coordinate snapshots (`PhysicsSyncPacket`) to Player 2 to completely eliminate synchronization drift.
+* **Authoritative Shot Execution:** Shots charged on the client trigger an authoritative stroke execution on the host via `ShotExecutionPacket`, preserving strict physics consistency.
 * **Thread-Safe Binary Framing:** All packets are encoded with Big-Endian length headers and dispatched via synchronized socket writes (`_sendLock`) to prevent stream interleaving.
 * **Self-Healing TCP Buffering:** Inbound streams dynamically expand their memory capacity up to 1 MB to seamlessly handle fragmented packet frames without stream desynchronization.
 
@@ -117,10 +122,11 @@ sequenceDiagram
 | :--- | :--- |
 | **Custom Kinematics Engine (480Hz)** | Built purely in C# without Box2D. Features sub-step micro-stepping (`dt = 1/480s`) to prevent tunneling, accurate restitution matrices, and realistic momentum transfers. |
 | **Online 1v1 Peer-to-Peer Relay** | Play over the internet using quick 5-digit room codes routed through our lightweight production relay server with zero port-forwarding requirements for players. |
-| **30-Second Turn Timer Subsystem** | Dynamic domain-driven countdown timer enforcing competitive pace with turn adjudication fouls and pulsating UI alerts. |
-| **Strict 8-Ball Referee State Machine** | Intelligent rule validation evaluating first-contact legality, rail contacts, pocket drops, scratch fouls, and winner determination. |
+| **Glassmorphism HUD & Integrated Timer** | Sleek corner player cards with individual sapphire/amber themes, 7-dot pocketing progress trackers, and an integrated turn timer with acoustic alerts. |
+| **Strict 8-Ball Referee State Machine** | Intelligent rule validation evaluating first-contact legality, rail contacts, pocket drops, scratch fouls, called pocket validation, and winner determination. |
+| **Authoritative Remote Aim & Pocket Sync** | Live opponent cursor preview during Ball-in-Hand, visual cue retraction without revealing dotted aim-assist lines, and synchronized 8-ball pocket calls. |
 | **Pure Raylib Hardware Integration** | Procedural vector drawing for balls, felt, cushions, and dynamic icons (generated purely in RAM and bound to Windows Shell). Interpolated 144Hz+ rendering. |
-| **100% Domain Test Coverage** | 62 comprehensive unit tests covering physics math, cue controllers, referee decision branches, and network packet framing. |
+| **100% Domain Test Coverage** | 76 comprehensive unit tests covering physics math, cue controllers, referee decision branches, and network packet framing. |
 
 ---
 
@@ -188,8 +194,8 @@ graph TD
 | **Network Protocol** | Custom TCP Length-Prefixed Framing, System.Text.Json Contracts |
 | **Server & Container** | .NET 9 Alpine Linux, Docker Compose, GitHub Actions (GHCR) |
 | **Architecture** | Clean Architecture, Domain-Driven Design (DDD), Composition Root DI |
-| **Automated Testing** | xUnit, Moq (62 Automated Domain & Network Tests) |
-| **Distribution** | Windows Native Self-Contained / Single-File Publishing |
+| **Automated Testing** | xUnit, Moq (76 Automated Domain, Physics & Network Tests) |
+| **Distribution** | Windows Native Self-Contained / Single-File Publishing (`build_release.ps1`) |
 
 ---
 
@@ -203,14 +209,14 @@ billards-game/
 ├── .github/workflows/
 │   └── docker-publish.yml             # Builds & publishes Relay Server to GHCR
 ├── App/                               # Presentation & Hardware Composition Root
-│   ├── RaylibRenderer.cs              # Full multi-view lobby, HUD timer & table rendering
+│   ├── RaylibRenderer.cs              # Full multi-view lobby, glassmorphism HUD & table rendering
 │   ├── RaylibInputProvider.cs         # Raw mouse/keyboard hardware adapter
 │   ├── SceneParameters.cs             # UI presentation data contract adapter
 │   ├── AudioManager.cs                # High-fidelity miniaudio BGM/SFX pipeline
 │   └── Program.cs                     # Composition Root wiring all subsystems
 ├── Core/                              # Match Rules & Domain State Machine
 │   ├── GameManager.cs                 # Match supervisor, turn states & 30s timer
-│   ├── CueController.cs               # Aim vector calculations & shot power charging
+│   ├── CueController.cs               # Aim vector calculations, shot power charging & overheat
 │   └── RuleValidator.cs               # Pure functional 8-ball referee evaluator
 ├── Physics/                           # High-Performance Kinematics Simulator
 │   ├── PhysicsEngine.cs               # Math loop evaluating 480Hz micro-steps
@@ -219,16 +225,16 @@ billards-game/
 ├── Network/                           # Online Multiplayer Subsystem
 │   ├── Abstractions/                  # INetworkService contracts
 │   ├── Services/                      # NetworkService (TCP framing, socket threads)
-│   ├── Protocol/                      # Data contracts (Aim, PhysicsSync, Handshake, etc.)
+│   ├── Protocol/                      # Data contracts (Aim, PhysicsSync, CallPocket, Handshake, etc.)
 │   └── Input/                         # NetworkInputProvider (Remote vs. Local multiplexer)
 ├── Server/
 │   └── BilliardsGame.RelayServer/     # Standalone lightweight 5-digit room pairing demon
 ├── Interfaces/                        # Shared models, enumerations and contracts
-├── Assets/                            # Demo GIFs, features illustrations & audio assets
-└── tests/                             # Comprehensive xUnit automated test suites
-    ├── BilliardsGame.Core.Tests       # 28 tests: turn transitions, timers & referee
+├── Assets/                            # Demo GIFs, features illustrations & audio assets (9 SFX, 2 BGM)
+└── tests/                             # Comprehensive xUnit automated test suites (76 total)
+    ├── BilliardsGame.Core.Tests       # 36 tests: turn transitions, timers, overheats & referee
     ├── BilliardsGame.Physics.Tests    # 17 tests: momentum transfer & cushion rebound
-    └── BilliardsGame.Network.Tests    # 17 tests: TCP framing, serialization & buffers
+    └── BilliardsGame.Network.Tests    # 23 tests: TCP framing, serialization & buffers
 ```
 
 </details>
@@ -296,12 +302,12 @@ dotnet run --project App/BilliardsGame.App.csproj
 dotnet test
 ```
 
-### 5. Build Standalone Release Package (.EXE)
-To create a portable release package ready for distribution:
+### 5. Build Standalone Release Package (.EXE & ZIP)
+To build the complete self-contained release package with all audio and native binaries:
 ```powershell
-dotnet publish App/BilliardsGame.App.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o ./dist
+powershell -ExecutionPolicy Bypass -File .\build_release.ps1
 ```
-Copy the `Audio/` directory into `./dist` and you have a self-contained game ready for any Windows PC!
+The output will be created in `dist/BilliardsGame-win-x64/` and compressed into `dist/BilliardsGame-win-x64.zip`.
 
 ---
 
