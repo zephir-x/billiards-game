@@ -83,6 +83,22 @@ namespace BilliardsGame.App
         public Action? OnRestartClicked { get; set; }
 
         /// <summary>
+        /// Dispatched when user requests to abort or leave the session and return to the main menu.
+        /// </summary>
+        public Action? OnGoToMenuClicked { get; set; }
+
+        /// <summary>
+        /// Indicates whether the active session is a 1v1 online multiplayer match.
+        /// When true, unilateral restart is hidden and menu return cleanly handles peer disconnect.
+        /// </summary>
+        public bool IsMultiplayerSession { get; set; } = false;
+
+        /// <summary>
+        /// Local participant player ID (1 for Host, 2 for Client, or 0 if local/offline).
+        /// </summary>
+        public int LocalPlayerId { get; set; } = 0;
+
+        /// <summary>
         /// Local explicit trigger hooking audio playback loops strictly isolating the domain UI bindings out of the rendering arrays.
         /// </summary>
         public Action? OnButtonHovered { get; set; }
@@ -406,23 +422,31 @@ namespace BilliardsGame.App
                     int p2X = 1600 - boxW - pad; int p2Y = pad;
                     int titleSize = 28; int valSize = 22;
 
+                    // Check if local player badge should be shown
+                    string p1Label = (IsMultiplayerSession && LocalPlayerId == 1) ? "Player 1 (YOU)" : "Player 1";
+                    string p2Label = (IsMultiplayerSession && LocalPlayerId == 2) ? "Player 2 (YOU)" : "Player 2";
+                    Color p1LabelColor = (IsMultiplayerSession && LocalPlayerId == 1) ? Color.Gold : Color.RayWhite;
+                    Color p2LabelColor = (IsMultiplayerSession && LocalPlayerId == 2) ? Color.Gold : Color.RayWhite;
+
                     Raylib.DrawRectangle(p1X, p1Y, boxW, boxH, new Color(30, 30, 30, 200));
                     if (_sceneData.CurrentTurnPlayer?.Id == 1) Raylib.DrawRectangleLines(p1X, p1Y, boxW, boxH, Color.Orange);
+                    else if (IsMultiplayerSession && LocalPlayerId == 1) Raylib.DrawRectangleLines(p1X, p1Y, boxW, boxH, new Color(180, 160, 60, 255));
                     else Raylib.DrawRectangleLines(p1X, p1Y, boxW, boxH, Color.DarkGray);
                     
                     Color p1ScoreColor = (p1Pocketed == 7) ? Color.Gold : Color.LightGray;
                     
-                    Raylib.DrawText("Player 1", p1X + boxW/2 - Raylib.MeasureText("Player 1", titleSize)/2, p1Y + 15, titleSize, Color.RayWhite);
+                    Raylib.DrawText(p1Label, p1X + boxW/2 - Raylib.MeasureText(p1Label, titleSize)/2, p1Y + 15, titleSize, p1LabelColor);
                     Raylib.DrawText($"Type: {p1Type}", p1X + boxW/2 - Raylib.MeasureText($"Type: {p1Type}", valSize)/2, p1Y + 55, valSize, Color.LightGray);
                     Raylib.DrawText($"Pocketed: {p1Pocketed}/7", p1X + boxW/2 - Raylib.MeasureText($"Pocketed: {p1Pocketed}/7", valSize)/2, p1Y + 90, valSize, p1ScoreColor);
 
                     Raylib.DrawRectangle(p2X, p2Y, boxW, boxH, new Color(30, 30, 30, 200));
                     if (_sceneData.CurrentTurnPlayer?.Id == 2) Raylib.DrawRectangleLines(p2X, p2Y, boxW, boxH, Color.Orange);
+                    else if (IsMultiplayerSession && LocalPlayerId == 2) Raylib.DrawRectangleLines(p2X, p2Y, boxW, boxH, new Color(180, 160, 60, 255));
                     else Raylib.DrawRectangleLines(p2X, p2Y, boxW, boxH, Color.DarkGray);
                     
                     Color p2ScoreColor = (p2Pocketed == 7) ? Color.Gold : Color.LightGray;
 
-                    Raylib.DrawText("Player 2", p2X + boxW/2 - Raylib.MeasureText("Player 2", titleSize)/2, p2Y + 15, titleSize, Color.RayWhite);
+                    Raylib.DrawText(p2Label, p2X + boxW/2 - Raylib.MeasureText(p2Label, titleSize)/2, p2Y + 15, titleSize, p2LabelColor);
                     Raylib.DrawText($"Type: {p2Type}", p2X + boxW/2 - Raylib.MeasureText($"Type: {p2Type}", valSize)/2, p2Y + 55, valSize, Color.LightGray);
                     Raylib.DrawText($"Pocketed: {p2Pocketed}/7", p2X + boxW/2 - Raylib.MeasureText($"Pocketed: {p2Pocketed}/7", valSize)/2, p2Y + 90, valSize, p2ScoreColor);
 
@@ -736,7 +760,15 @@ namespace BilliardsGame.App
             if (!string.IsNullOrEmpty(JoinStatus))
             {
                 int statW = Raylib.MeasureText(JoinStatus, 22);
-                Raylib.DrawText(JoinStatus, (int)offsetX + screenW / 2 - statW / 2, 410, 22, Color.Red);
+                Color statusColor = (JoinStatus.StartsWith("Connecting", StringComparison.OrdinalIgnoreCase) ||
+                                     JoinStatus.StartsWith("Joined", StringComparison.OrdinalIgnoreCase) ||
+                                     JoinStatus.StartsWith("Ready", StringComparison.OrdinalIgnoreCase))
+                    ? Color.Lime
+                    : (JoinStatus.StartsWith("Failed", StringComparison.OrdinalIgnoreCase) ||
+                       JoinStatus.StartsWith("Code must", StringComparison.OrdinalIgnoreCase))
+                        ? Color.Red
+                        : Color.Gold;
+                Raylib.DrawText(JoinStatus, (int)offsetX + screenW / 2 - statW / 2, 410, 22, statusColor);
             }
 
             // Connect & Back buttons
@@ -782,33 +814,70 @@ namespace BilliardsGame.App
             Raylib.DrawRectangle(0, 0, screenW, screenH, new Color(0, 0, 0, (int)Math.Clamp(210 * (1f - Math.Abs(offsetX)/1600f), 0, 255)));
             
             int titleW = Raylib.MeasureText("PAUSED", 80);
-            Raylib.DrawText("PAUSED", (int)offsetX + screenW / 2 - titleW / 2, 200, 80, Color.RayWhite);
+            Raylib.DrawText("PAUSED", (int)offsetX + screenW / 2 - titleW / 2, 180, 80, Color.RayWhite);
 
-            int btnWidth = 320; int btnHeight = 70; int gap = 24;
+            int btnWidth = 340; int btnHeight = 65; int gap = 20;
             int startX = (int)offsetX + screenW / 2 - btnWidth / 2;
-            int startY = screenH / 2 - (btnHeight * 3 + gap * 2) / 2 + 50;
 
             Vector2 mousePos = Raylib.GetMousePosition();
             bool isClick = Raylib.IsMouseButtonReleased(MouseButton.Left);
 
-            Rectangle continueRect = new Rectangle(startX, startY, btnWidth, btnHeight);
-            Rectangle restartRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
-            Rectangle exitRect = new Rectangle(startX, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
-            
-            bool continueHover = Raylib.CheckCollisionPointRec(mousePos, continueRect);
-            bool restartHover = Raylib.CheckCollisionPointRec(mousePos, restartRect);
-            bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
-            string currentHover = continueHover ? "continue" : (restartHover ? "restart" : (exitHover ? "exit" : "none"));
-            if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
-            _lastHoveredId = currentHover;
+            if (IsMultiplayerSession)
+            {
+                // In multiplayer: Continue, Go to Menu, Exit (Restart is completely omitted)
+                int totalH = btnHeight * 3 + gap * 2;
+                int startY = screenH / 2 - totalH / 2 + 50;
 
-            DrawModernButton(continueRect, "Continue", continueHover);
-            DrawModernButton(restartRect, "Restart", restartHover);
-            DrawModernButton(exitRect, "Exit", exitHover);
+                Rectangle continueRect = new Rectangle(startX, startY, btnWidth, btnHeight);
+                Rectangle menuRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
+                Rectangle exitRect = new Rectangle(startX, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
 
-            if (continueHover && isClick) OnContinueClicked?.Invoke();
-            if (restartHover && isClick) OnRestartClicked?.Invoke();
-            if (exitHover && isClick) OnExitClicked?.Invoke();
+                bool continueHover = Raylib.CheckCollisionPointRec(mousePos, continueRect);
+                bool menuHover = Raylib.CheckCollisionPointRec(mousePos, menuRect);
+                bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
+
+                string currentHover = continueHover ? "continue" : (menuHover ? "menu" : (exitHover ? "exit" : "none"));
+                if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
+                _lastHoveredId = currentHover;
+
+                DrawModernButton(continueRect, "Continue", continueHover);
+                DrawModernButton(menuRect, "Main Menu", menuHover);
+                DrawModernButton(exitRect, "Exit to Desktop", exitHover);
+
+                if (continueHover && isClick) OnContinueClicked?.Invoke();
+                if (menuHover && isClick) OnGoToMenuClicked?.Invoke();
+                if (exitHover && isClick) OnExitClicked?.Invoke();
+            }
+            else
+            {
+                // In singleplayer/training: Continue, Restart, Main Menu, Exit
+                int totalH = btnHeight * 4 + gap * 3;
+                int startY = screenH / 2 - totalH / 2 + 50;
+
+                Rectangle continueRect = new Rectangle(startX, startY, btnWidth, btnHeight);
+                Rectangle restartRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
+                Rectangle menuRect = new Rectangle(startX, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
+                Rectangle exitRect = new Rectangle(startX, startY + (btnHeight + gap) * 3, btnWidth, btnHeight);
+
+                bool continueHover = Raylib.CheckCollisionPointRec(mousePos, continueRect);
+                bool restartHover = Raylib.CheckCollisionPointRec(mousePos, restartRect);
+                bool menuHover = Raylib.CheckCollisionPointRec(mousePos, menuRect);
+                bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
+
+                string currentHover = continueHover ? "continue" : (restartHover ? "restart" : (menuHover ? "menu" : (exitHover ? "exit" : "none")));
+                if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
+                _lastHoveredId = currentHover;
+
+                DrawModernButton(continueRect, "Continue", continueHover);
+                DrawModernButton(restartRect, "Restart Table", restartHover);
+                DrawModernButton(menuRect, "Main Menu", menuHover);
+                DrawModernButton(exitRect, "Exit to Desktop", exitHover);
+
+                if (continueHover && isClick) OnContinueClicked?.Invoke();
+                if (restartHover && isClick) OnRestartClicked?.Invoke();
+                if (menuHover && isClick) OnGoToMenuClicked?.Invoke();
+                if (exitHover && isClick) OnExitClicked?.Invoke();
+            }
         }        
         private void DrawGameOverMenu(float offsetX)
         {
@@ -823,27 +892,54 @@ namespace BilliardsGame.App
             int titleW = Raylib.MeasureText(winnerTxt, 90);
             Raylib.DrawText(winnerTxt, (int)offsetX + screenW / 2 - titleW / 2, 220, 90, Color.Gold);
 
-            int btnWidth = 320; int btnHeight = 70; int gap = 24;
+            int btnWidth = 340; int btnHeight = 65; int gap = 20;
             int startX = (int)offsetX + screenW / 2 - btnWidth / 2;
-            int startY = screenH / 2 - 20;
 
             Vector2 mousePos = Raylib.GetMousePosition();
             bool isClick = Raylib.IsMouseButtonReleased(MouseButton.Left);
 
-            Rectangle restartRect = new Rectangle(startX, startY, btnWidth, btnHeight);
-            Rectangle exitRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
-            
-            bool restartHover = Raylib.CheckCollisionPointRec(mousePos, restartRect);
-            bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
-            string currentHover = restartHover ? "restart" : (exitHover ? "exit" : "none");
-            if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
-            _lastHoveredId = currentHover;
+            if (IsMultiplayerSession)
+            {
+                // In multiplayer: Main Menu, Exit (Play Again / Restart is omitted)
+                int startY = screenH / 2 + 10;
+                Rectangle menuRect = new Rectangle(startX, startY, btnWidth, btnHeight);
+                Rectangle exitRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
 
-            DrawModernButton(restartRect, "Play Again", restartHover);
-            DrawModernButton(exitRect, "Exit", exitHover);
+                bool menuHover = Raylib.CheckCollisionPointRec(mousePos, menuRect);
+                bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
+                string currentHover = menuHover ? "menu" : (exitHover ? "exit" : "none");
+                if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
+                _lastHoveredId = currentHover;
 
-            if (restartHover && isClick) OnRestartClicked?.Invoke();
-            if (exitHover && isClick) OnExitClicked?.Invoke();
+                DrawModernButton(menuRect, "Main Menu", menuHover);
+                DrawModernButton(exitRect, "Exit to Desktop", exitHover);
+
+                if (menuHover && isClick) OnGoToMenuClicked?.Invoke();
+                if (exitHover && isClick) OnExitClicked?.Invoke();
+            }
+            else
+            {
+                // In singleplayer/training: Play Again, Main Menu, Exit
+                int startY = screenH / 2 - 20;
+                Rectangle restartRect = new Rectangle(startX, startY, btnWidth, btnHeight);
+                Rectangle menuRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
+                Rectangle exitRect = new Rectangle(startX, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
+
+                bool restartHover = Raylib.CheckCollisionPointRec(mousePos, restartRect);
+                bool menuHover = Raylib.CheckCollisionPointRec(mousePos, menuRect);
+                bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
+                string currentHover = restartHover ? "restart" : (menuHover ? "menu" : (exitHover ? "exit" : "none"));
+                if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
+                _lastHoveredId = currentHover;
+
+                DrawModernButton(restartRect, "Play Again", restartHover);
+                DrawModernButton(menuRect, "Main Menu", menuHover);
+                DrawModernButton(exitRect, "Exit to Desktop", exitHover);
+
+                if (restartHover && isClick) OnRestartClicked?.Invoke();
+                if (menuHover && isClick) OnGoToMenuClicked?.Invoke();
+                if (exitHover && isClick) OnExitClicked?.Invoke();
+            }
         }
         
         // Internal loop helpers isolated below the scope definitions keeping DrawFrame clean.

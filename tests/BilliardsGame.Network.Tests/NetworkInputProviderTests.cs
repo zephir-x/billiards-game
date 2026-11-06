@@ -28,7 +28,7 @@ namespace BilliardsGame.Network.Tests
             localInputMock.SetupGet(i => i.IsLeftMouseDown).Returns(true);
             localInputMock.SetupGet(i => i.WasLeftMouseReleased).Returns(false);
 
-            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 1);
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 1, () => { });
 
             Assert.True(provider.IsMyTurn);
             Assert.Equal(new Vector2(123f, 456f), provider.MouseWorldPosition);
@@ -52,7 +52,7 @@ namespace BilliardsGame.Network.Tests
             localInputMock.SetupGet(i => i.WasLeftMousePressed).Returns(true);
 
             // Active player is Player 1 (same as LocalPlayerId).
-            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 1);
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 1, () => { });
 
             Assert.True(provider.IsMyTurn);
             Assert.Equal(new Vector2(200f, 300f), provider.MouseWorldPosition);
@@ -77,7 +77,7 @@ namespace BilliardsGame.Network.Tests
             localInputMock.SetupGet(i => i.IsLeftMouseDown).Returns(true);
 
             // Active player is Player 2 (Remote opponent).
-            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2);
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2, () => { });
 
             Assert.False(provider.IsMyTurn);
             // Local clicks must be unconditionally suppressed!
@@ -105,13 +105,17 @@ namespace BilliardsGame.Network.Tests
             networkMock.SetupGet(n => n.LocalPlayerId).Returns(1);
 
             // Active player is Player 2 (Remote opponent).
-            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2);
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2, () => { });
+
+            bool cueResetCalled = false;
+            provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2, () => { cueResetCalled = true; });
 
             // Remote shot packet arrives.
             var shotPacket = new ShotExecutionPacket(100f, 0f, 1f, 0f, 0.8f);
             networkMock.Raise(n => n.OnShotExecutionReceived += null, shotPacket);
 
             Assert.True(provider.WasLeftMouseReleased);
+            Assert.True(cueResetCalled);
         }
     }
 }

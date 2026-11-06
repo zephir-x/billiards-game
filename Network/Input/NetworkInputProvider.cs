@@ -16,6 +16,7 @@ namespace BilliardsGame.Network.Input
         private readonly IInputProvider _localInputProvider;
         private readonly INetworkService _networkService;
         private readonly Func<int> _activePlayerIdProvider;
+        private readonly Action _onForceResetCue;
 
         // Remote aim and placement coordinates received across network stream.
         private Vector2 _remoteMousePosition = Vector2.Zero;
@@ -28,19 +29,22 @@ namespace BilliardsGame.Network.Input
         private const float AimSyncInterval = 1f / 60f; // 60Hz telemetry stream
 
         /// <summary>
-        /// Instantiates the network input proxy with decoupled local input and network dependencies.
+        /// Instantiates the network input proxy with decoupled local input, network dependencies, and cue reset delegate.
         /// </summary>
         /// <param name="localInputProvider">Local hardware peripheral input provider.</param>
         /// <param name="networkService">Active peer network session supervisor.</param>
         /// <param name="activePlayerIdProvider">Delegate returning the current active player ID (1 or 2).</param>
+        /// <param name="onForceResetCue">Delegate invoked to forcefully reset cue aim and charge state upon shot release.</param>
         public NetworkInputProvider(
             IInputProvider localInputProvider,
             INetworkService networkService,
-            Func<int> activePlayerIdProvider)
+            Func<int> activePlayerIdProvider,
+            Action onForceResetCue)
         {
             _localInputProvider = localInputProvider ?? throw new ArgumentNullException(nameof(localInputProvider));
             _networkService = networkService ?? throw new ArgumentNullException(nameof(networkService));
             _activePlayerIdProvider = activePlayerIdProvider ?? throw new ArgumentNullException(nameof(activePlayerIdProvider));
+            _onForceResetCue = onForceResetCue ?? throw new ArgumentNullException(nameof(onForceResetCue));
 
             // Hook inbound network packet listeners.
             _networkService.OnAimSyncReceived += HandleRemoteAimSync;
@@ -102,6 +106,16 @@ namespace BilliardsGame.Network.Input
             {
                 return IsMyTurn ? _localInputProvider.WasLeftMouseReleased : _remoteReleased;
             }
+        }
+
+        /// <summary>
+        /// Clears all residual simulated remote click states, preventing stuck mouse down or phantom releases.
+        /// </summary>
+        public void ClearRemoteInputStates()
+        {
+            _remotePressed = false;
+            _remoteDown = false;
+            _remoteReleased = false;
         }
 
         /// <summary>
@@ -195,6 +209,7 @@ namespace BilliardsGame.Network.Input
 
         /// <summary>
         /// Ingests remote shot execution trigger applying simulated click release to launch the stroke.
+        /// Immediately clears remote mouse down flags and invokes cue reset to eliminate stuck cue renderings.
         /// </summary>
         /// <param name="packet">Shot impulse execution contract.</param>
         private void HandleRemoteShotExecution(ShotExecutionPacket packet)
@@ -203,6 +218,7 @@ namespace BilliardsGame.Network.Input
             {
                 _remoteDown = false;
                 _remoteReleased = true;
+                _onForceResetCue?.Invoke();
             }
         }
     }

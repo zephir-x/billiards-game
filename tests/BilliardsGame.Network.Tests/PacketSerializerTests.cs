@@ -194,6 +194,7 @@ namespace BilliardsGame.Network.Tests
                 5,
                 BallType.Solid,
                 BallType.Striped,
+                14.2f,
                 "FOUL: Time Out",
                 NotificationType.Foul,
                 null);
@@ -213,6 +214,7 @@ namespace BilliardsGame.Network.Tests
             Assert.Equal(5, result.Player2Score);
             Assert.Equal(BallType.Solid, result.Player1AssignedType);
             Assert.Equal(BallType.Striped, result.Player2AssignedType);
+            Assert.Equal(14.2f, result.RemainingTurnTime);
             Assert.Equal("FOUL: Time Out", result.NotificationMessage);
             Assert.Equal(NotificationType.Foul, result.NotificationType);
             Assert.Null(result.WinnerId);

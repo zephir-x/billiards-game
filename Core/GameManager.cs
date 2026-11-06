@@ -31,7 +31,7 @@ namespace BilliardsGame.Core
         public IPlayer Player2 => _player2;
 
         /// <inheritdoc />
-        public float RemainingTurnTime { get; private set; } = 30.0f;
+        public float RemainingTurnTime { get; private set; } = 15.0f;
         
         /// <inheritdoc />
         public string NotificationMessage { get; private set; } = "";
@@ -56,6 +56,9 @@ namespace BilliardsGame.Core
         
         /// <inheritdoc />
         public event Action<NotificationType>? OnNotificationEvent;
+
+        /// <inheritdoc />
+        public event Action? OnStateTransition;
 
         // Decoupled sub-system references injected via primary constraints.
         private readonly IPhysicsEngine _physicsEngine;
@@ -92,7 +95,7 @@ namespace BilliardsGame.Core
 
             CurrentState = GameState.Menu;
             ActivePlayer = _player1;
-            RemainingTurnTime = 30.0f;
+            RemainingTurnTime = 15.0f;
         }
 
         /// <summary>
@@ -121,10 +124,11 @@ namespace BilliardsGame.Core
             NotificationMessage = "";
             NotificationTimer = 0f;
             TargetPocket = null;
-            RemainingTurnTime = 30.0f;
+            RemainingTurnTime = 15.0f;
             
             ActivePlayer = _player1;
             SetTurnState();
+            OnStateTransition?.Invoke();
         }
 
         /// <inheritdoc />
@@ -133,8 +137,9 @@ namespace BilliardsGame.Core
             // Switch pointer targets forcing sequential player operations resolving legal turnovers.
             TargetPocket = null;
             ActivePlayer = ActivePlayer == _player1 ? _player2 : _player1;
-            RemainingTurnTime = 30.0f;
+            RemainingTurnTime = 15.0f;
             SetTurnState();
+            OnStateTransition?.Invoke();
         }
 
         /// <summary>
@@ -143,7 +148,7 @@ namespace BilliardsGame.Core
         /// </summary>
         private void SetTurnState()
         {
-            RemainingTurnTime = 30.0f;
+            RemainingTurnTime = 15.0f;
             if (ActivePlayer.Score == 7)
             {
                 TargetPocket = null;
@@ -203,7 +208,7 @@ namespace BilliardsGame.Core
             {
                 TargetPocket = pocket;
                 CurrentState = GameState.PlayerTurn;
-                RemainingTurnTime = 30.0f;
+                RemainingTurnTime = 15.0f;
             }
         }
 
@@ -213,8 +218,9 @@ namespace BilliardsGame.Core
             if (CurrentState == GameState.BallInHand && IsValidCueBallPlacement(position))
             {
                 OnPlaceCueBall?.Invoke(position);
-                RemainingTurnTime = 30.0f;
+                RemainingTurnTime = 15.0f;
                 SetTurnState();
+                OnStateTransition?.Invoke();
             }
         }
 
@@ -246,7 +252,8 @@ namespace BilliardsGame.Core
             TargetPocket = null;
             ActivePlayer = ActivePlayer == _player1 ? _player2 : _player1;
             CurrentState = GameState.BallInHand;
-            RemainingTurnTime = 30.0f;
+            RemainingTurnTime = 15.0f;
+            OnStateTransition?.Invoke();
         }
 
         /// <inheritdoc />
@@ -322,6 +329,7 @@ namespace BilliardsGame.Core
                     if (_inputProvider.WasLeftMousePressed)
                     {
                         CurrentState = GameState.ChargingShot;
+                        OnStateTransition?.Invoke();
                     }
                     break;
                 }
@@ -369,6 +377,7 @@ namespace BilliardsGame.Core
                                 .ToList();
 
                             CurrentState = GameState.SimulatingBalls;
+                            OnStateTransition?.Invoke();
                         }
                     }
                     break;
@@ -477,10 +486,12 @@ namespace BilliardsGame.Core
                                 TargetPocket = null;
                                 ActivePlayer = ActivePlayer == _player1 ? _player2 : _player1;
                                 CurrentState = GameState.BallInHand;
-                                RemainingTurnTime = 30.0f;
+                                RemainingTurnTime = 15.0f;
+                                OnStateTransition?.Invoke();
                                 break;
                             case RuleResult.Continue:
                                 SetTurnState();
+                                OnStateTransition?.Invoke();
                                 break;
                             case RuleResult.TurnLost:
                                 EndTurn();
@@ -488,12 +499,14 @@ namespace BilliardsGame.Core
                             case RuleResult.GameOverWin:
                                 Winner = ActivePlayer;
                                 CurrentState = GameState.GameOver;
-                                OnGameOver?.Invoke(); 
+                                OnGameOver?.Invoke();
+                                OnStateTransition?.Invoke();
                                 break;
                             case RuleResult.GameOverLose:
                                 Winner = ActivePlayer == _player1 ? _player2 : _player1;
                                 CurrentState = GameState.GameOver;
-                                OnGameOver?.Invoke(); 
+                                OnGameOver?.Invoke();
+                                OnStateTransition?.Invoke();
                                 break;
                         }
                     }
@@ -502,6 +515,69 @@ namespace BilliardsGame.Core
                 
                 case GameState.GameOver:
                     break;
+            }
+        }
+
+        /// <inheritdoc />
+        public void ResetToMenu()
+        {
+            CurrentState = GameState.Menu;
+            RemainingTurnTime = 15.0f;
+            NotificationMessage = string.Empty;
+            NotificationTimer = 0f;
+            TargetPocket = null;
+            Winner = null;
+            _cueController.ResetCharge();
+            OnStateTransition?.Invoke();
+        }
+
+        /// <inheritdoc />
+        public void ConcludeMatchByForfeit(int winnerPlayerId, string reason)
+        {
+            Winner = (winnerPlayerId == 1) ? _player1 : _player2;
+            CurrentState = GameState.GameOver;
+            _cueController.ResetCharge();
+            SetNotification(reason, NotificationType.Info, 5.0f);
+            OnGameOver?.Invoke();
+            OnStateTransition?.Invoke();
+        }
+
+        /// <inheritdoc />
+        public void ApplyAuthoritativeState(
+            GameState state,
+            int activePlayerId,
+            int p1Score,
+            int p2Score,
+            BallType? p1Type,
+            BallType? p2Type,
+            float remainingTurnTime,
+            string notification,
+            NotificationType notificationType,
+            int? winnerId)
+        {
+            CurrentState = state;
+            ActivePlayer = (activePlayerId == 1) ? _player1 : _player2;
+            _player1.Score = p1Score;
+            _player2.Score = p2Score;
+            _player1.AssignedType = p1Type;
+            _player2.AssignedType = p2Type;
+            RemainingTurnTime = remainingTurnTime;
+
+            if (!string.IsNullOrEmpty(notification))
+            {
+                NotificationMessage = notification;
+                NotificationType = notificationType;
+                NotificationTimer = 3.0f;
+                OnNotificationEvent?.Invoke(notificationType);
+            }
+
+            if (winnerId.HasValue)
+            {
+                Winner = (winnerId.Value == 1) ? _player1 : _player2;
+                if (CurrentState == GameState.GameOver)
+                {
+                    OnGameOver?.Invoke();
+                }
             }
         }
 

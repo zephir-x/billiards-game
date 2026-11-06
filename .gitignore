@@ -4,3 +4,7 @@
 # .NET Core
 bin/
 obj/
+
+# Distribution builds
+dist/
+publish/

@@ -136,13 +136,13 @@ namespace BilliardsGame.Core.Tests
 
             // Assert baseline beginning timer state.
             Assert.Equal(GameState.PlayerTurn, gameManager.CurrentState);
-            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+            Assert.Equal(15.0f, gameManager.RemainingTurnTime);
 
             // Step domain frame by 5.5 seconds.
             gameManager.UpdateLogic(5.5f);
 
             // Assert timer reduced accurately by delta elapsed.
-            Assert.Equal(24.5f, gameManager.RemainingTurnTime, 3);
+            Assert.Equal(9.5f, gameManager.RemainingTurnTime, 3);
         }
 
         /// <summary>
@@ -167,7 +167,7 @@ namespace BilliardsGame.Core.Tests
             inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(true);
             gameManager.UpdateLogic(2.0f);
             Assert.Equal(GameState.ChargingShot, gameManager.CurrentState);
-            Assert.Equal(28.0f, gameManager.RemainingTurnTime, 3);
+            Assert.Equal(13.0f, gameManager.RemainingTurnTime, 3);
 
             // Maintain sustained mouse button depression simulating prolonged charge hold.
             inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(false);
@@ -175,7 +175,7 @@ namespace BilliardsGame.Core.Tests
             gameManager.UpdateLogic(3.0f);
 
             Assert.Equal(GameState.ChargingShot, gameManager.CurrentState);
-            Assert.Equal(25.0f, gameManager.RemainingTurnTime, 3);
+            Assert.Equal(10.0f, gameManager.RemainingTurnTime, 3);
         }
 
         /// <summary>
@@ -196,7 +196,7 @@ namespace BilliardsGame.Core.Tests
             gameManager.UpdateLogic(5.0f);
 
             // Timer should remain frozen at maximum allocation.
-            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+            Assert.Equal(15.0f, gameManager.RemainingTurnTime);
         }
 
         /// <summary>
@@ -215,14 +215,14 @@ namespace BilliardsGame.Core.Tests
             gameManager.UpdateLogic(12.0f);
 
             // Validate that Player 1 consumed part of their allocated turn time.
-            Assert.Equal(18.0f, gameManager.RemainingTurnTime, 3);
+            Assert.Equal(3.0f, gameManager.RemainingTurnTime, 3);
             Assert.Equal(1, gameManager.ActivePlayer.Id);
 
             // Conclude turn legally.
             gameManager.EndTurn();
 
             // Countdown must be restored to default 30s and active player toggled to Player 2.
-            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+            Assert.Equal(15.0f, gameManager.RemainingTurnTime);
             Assert.Equal(2, gameManager.ActivePlayer.Id);
         }
 
@@ -252,7 +252,7 @@ namespace BilliardsGame.Core.Tests
             gameManager.OnNotificationEvent += (type) => notificationTypeFired = type;
 
             // Advance logical timeline past the full 30.0-second threshold.
-            gameManager.UpdateLogic(30.0f);
+            gameManager.UpdateLogic(15.0f);
 
             // Assert foul events and semantic banner broadcasting.
             Assert.True(scratchFoulFired, "OnScratchFoul should have been invoked on timeout.");
@@ -261,7 +261,7 @@ namespace BilliardsGame.Core.Tests
             Assert.Equal(NotificationType.Foul, gameManager.NotificationType);
             Assert.Equal(GameState.BallInHand, gameManager.CurrentState);
             Assert.Equal(2, gameManager.ActivePlayer.Id);
-            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+            Assert.Equal(15.0f, gameManager.RemainingTurnTime);
 
             // Assert that cue ball removal was requested to enforce ball-in-hand placement.
             physicsMock.Verify(p => p.RemoveBody(cueBallMock.Object), Times.Once);
@@ -290,12 +290,102 @@ namespace BilliardsGame.Core.Tests
             gameManager.UpdateLogic(1.0f);
 
             // Expire remaining time while overheated.
-            gameManager.UpdateLogic(29.0f);
+            gameManager.UpdateLogic(14.0f);
 
             // Verify state transition and reset of cue charge.
             Assert.Equal(GameState.BallInHand, gameManager.CurrentState);
             Assert.Equal(2, gameManager.ActivePlayer.Id);
             cueMock.Verify(c => c.ResetCharge(), Times.Once);
+        }
+
+        /// <summary>
+        /// Verifies that ResetToMenu transitions the manager back to Menu state, resets turn timers, and cleans up cue charge.
+        /// </summary>
+        [Fact]
+        public void ResetToMenu_ResetsStateAndCue()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+            Assert.Equal(GameState.PlayerTurn, gm.CurrentState);
+
+            bool transitionFired = false;
+            gm.OnStateTransition += () => transitionFired = true;
+
+            gm.ResetToMenu();
+
+            Assert.Equal(GameState.Menu, gm.CurrentState);
+            Assert.Equal(15.0f, gm.RemainingTurnTime);
+            Assert.Null(gm.Winner);
+            Assert.True(transitionFired);
+            cueMock.Verify(c => c.ResetCharge(), Times.Once);
+        }
+
+        /// <summary>
+        /// Verifies that ConcludeMatchByForfeit awards instant victory to the designated player and fires OnGameOver.
+        /// </summary>
+        [Fact]
+        public void ConcludeMatchByForfeit_SetsWinnerAndFiresGameOver()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            bool gameOverFired = false;
+            bool transitionFired = false;
+            gm.OnGameOver += () => gameOverFired = true;
+            gm.OnStateTransition += () => transitionFired = true;
+
+            gm.ConcludeMatchByForfeit(1, "Opponent Left - You Win by Forfeit!");
+
+            Assert.Equal(GameState.GameOver, gm.CurrentState);
+            Assert.NotNull(gm.Winner);
+            Assert.Equal(1, gm.Winner.Id);
+            Assert.Equal("Opponent Left - You Win by Forfeit!", gm.NotificationMessage);
+            Assert.True(gameOverFired);
+            Assert.True(transitionFired);
+            cueMock.Verify(c => c.ResetCharge(), Times.Once);
+        }
+
+        /// <summary>
+        /// Verifies that ApplyAuthoritativeState accurately maps all snapshot parameters onto the game manager.
+        /// </summary>
+        [Fact]
+        public void ApplyAuthoritativeState_SetsAllDomainProperties()
+        {
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gm = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gm.StartGame();
+
+            gm.ApplyAuthoritativeState(
+                GameState.SimulatingBalls,
+                activePlayerId: 2,
+                p1Score: 3,
+                p2Score: 5,
+                p1Type: BallType.Solid,
+                p2Type: BallType.Striped,
+                remainingTurnTime: 11.4f,
+                notification: "Great Shot!",
+                notificationType: NotificationType.Info,
+                winnerId: null);
+
+            Assert.Equal(GameState.SimulatingBalls, gm.CurrentState);
+            Assert.Equal(2, gm.ActivePlayer.Id);
+            Assert.Equal(3, gm.Player1.Score);
+            Assert.Equal(5, gm.Player2.Score);
+            Assert.Equal(BallType.Solid, gm.Player1.AssignedType);
+            Assert.Equal(BallType.Striped, gm.Player2.AssignedType);
+            Assert.Equal(11.4f, gm.RemainingTurnTime);
+            Assert.Equal("Great Shot!", gm.NotificationMessage);
         }
     }
 }

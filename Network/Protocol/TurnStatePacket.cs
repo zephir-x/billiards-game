@@ -4,7 +4,7 @@ namespace BilliardsGame.Network.Protocol
 {
     /// <summary>
     /// Authoritative game state transition message broadcast by host upon turn changes, foul determinations, and match conclusions.
-    /// Ensures both participants share the identical domain state machine progression and scoring tallies.
+    /// Ensures both participants share the identical domain state machine progression, clocks, and scoring tallies.
     /// </summary>
     public class TurnStatePacket
     {
@@ -39,6 +39,11 @@ namespace BilliardsGame.Network.Protocol
         public BallType? Player2AssignedType { get; set; }
 
         /// <summary>
+        /// Remaining turn countdown seconds from host clock.
+        /// </summary>
+        public float RemainingTurnTime { get; set; }
+
+        /// <summary>
         /// High-priority notification banner string (e.g. "FOUL: Time Out", "FOUL: Scratch").
         /// </summary>
         public string NotificationMessage { get; set; } = string.Empty;
@@ -67,6 +72,7 @@ namespace BilliardsGame.Network.Protocol
         /// <param name="p2Score">Score of Player 2.</param>
         /// <param name="p1Type">Assigned ball type for Player 1.</param>
         /// <param name="p2Type">Assigned ball type for Player 2.</param>
+        /// <param name="remainingTurnTime">Authoritative remaining turn time in seconds.</param>
         /// <param name="notification">Notification banner text.</param>
         /// <param name="notificationType">Notification category.</param>
         /// <param name="winnerId">Winner player ID if game ended.</param>
@@ -77,6 +83,7 @@ namespace BilliardsGame.Network.Protocol
             int p2Score,
             BallType? p1Type,
             BallType? p2Type,
+            float remainingTurnTime,
             string notification,
             NotificationType notificationType,
             int? winnerId)
@@ -87,6 +94,7 @@ namespace BilliardsGame.Network.Protocol
             Player2Score = p2Score;
             Player1AssignedType = p1Type;
             Player2AssignedType = p2Type;
+            RemainingTurnTime = remainingTurnTime;
             NotificationMessage = notification;
             NotificationType = notificationType;
             WinnerId = winnerId;
