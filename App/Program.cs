@@ -177,9 +177,10 @@ namespace BilliardsGame.App
             var networkService = new NetworkService();
             var cueController = new CueController();
             
-            // Relay endpoint resolution from environment variables or defaults.
-            string relayHost = Environment.GetEnvironmentVariable("RELAY_HOST") ?? "127.0.0.1";
-            int relayPort = int.TryParse(Environment.GetEnvironmentVariable("RELAY_PORT"), out int p) ? p : 7777;
+            // Relay endpoint resolution: defaults to production Mikrus Relay Server (zack117.mikrus.xyz:20117),
+            // while preserving override capability via environment variables for local testing.
+            string relayHost = Environment.GetEnvironmentVariable("RELAY_HOST") ?? "zack117.mikrus.xyz";
+            int relayPort = int.TryParse(Environment.GetEnvironmentVariable("RELAY_PORT"), out int p) ? p : 20117;
 
             // Forward declaration to resolve active player ID provider for input multiplexing.
             GameManager? gameManager = null;
