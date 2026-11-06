@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-# 🎱 2D Billiards - Zephir Edition
+# 🎱 2D Billiards Game
 
 [![.NET 9](https://img.shields.io/badge/.NET_9.0-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![C#](https://img.shields.io/badge/C%23_13-239120?style=for-the-badge&logo=c-sharp&logoColor=white)](https://docs.microsoft.com/en-us/dotnet/csharp/)

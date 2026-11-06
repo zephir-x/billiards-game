@@ -150,6 +150,40 @@ The project is a 2D billiards simulation built in .NET, focusing on precise phys
   - [x] **E. Reconnection & Disconnect Fault Handling:**
     - Graceful connection drop detection: if a peer disconnects, prompt an informational UI overlay ("Opponent disconnected") with options to forfeit or return to the main menu without thread crash or application freeze.
 
+- **Phase 14: Multiplayer Synchronization Hardening & Game Experience Polish [To Do]**
+  - [x] **Step 1: Network Synchronization & Turn State Lockstep Resolution (Critical Priority)**
+    - **Problem Identified:** Severe desynchronization occurs after the first shot. The remote opponent continues rendering the cue stick as if aiming/charging even after the shot has released; ball movements are jerky/unsynced; turn states, clocks, and active player indicators diverge completely.
+    - **A. Shot Execution Propagation & Cue State Clearing:**
+      - When `ExecuteShot` is triggered by the active player, the client/host must immediately transmit `ShotExecutionPacket` AND forcefully reset local/remote cue rendering state (`CueController.ResetCharge()`).
+      - In `NetworkInputProvider`, when receiving `ShotExecutionPacket` or when state transitions to `SimulatingBalls`, ensure `IsLeftMouseDown` and `WasLeftMouseReleased` are cleanly pulsed and reset to prevent "stuck aim/charge" ghost inputs.
+    - **B. Authoritative State Machine & Turn Synchronization:**
+      - The **Host** is the sole authoritative referee and physics arbiter. The Host must emit `TurnStatePacket` upon ANY state transition (`PlayerTurn`, `ChargingShot`, `SimulatingBalls`, `BallInHand`, `GameOver`, score update, foul notification, active player handoff).
+      - The **Client** must strictly synchronize its `GameManager.CurrentState`, `ActivePlayer`, `Scores`, and `RemainingTurnTime` from the authoritative Host `TurnStatePacket`, rather than running an independent asynchronous turn timer/state machine that drifts.
+    - **C. Telemetry Lock & Turn Timer Alignment:**
+      - Synchronize `RemainingTurnTime` from Host to Client at tick boundaries to keep clocks strictly identical across screens.
+      - Clamp client physics simulation strictly to Host snapshots during `SimulatingBalls` to eliminate local collision divergence.
+
+  - [x] **Step 2: Match Flow, Menu Ergonomics & UI Refinements**
+    - **A. Pause & Game Over Screen Adaptations:**
+      - **Multiplayer Mode:** Remove the `Restart` button completely from both Pause (`ESC`) and Game Over screens (a live 1v1 online session cannot be unilaterally restarted).
+      - **Both Modes:** Add a prominent, styled `Go Back to Menu` button (cleanly disconnecting active network sockets if in multiplayer, resetting session state, and returning smoothly to `MainMenuView.Main`).
+    - **B. Turn Timer Duration Tuning:**
+      - Shorten the global turn timer countdown from `30.0s` to **`15.0s`** across `GameManager` and unit tests to ensure dynamic, fast-paced pool action.
+    - **C. Player Role Clarification at Match Start:**
+      - Display a clear, prominent announcement / banner at the beginning of an online match (e.g. `You are Player 1 (Host)` vs `You are Player 2 (Client)`).
+      - Highlight the local player's identity on the scoreboard panel throughout the entire match.
+    - **D. Join Room Status Feedback:**
+      - Fix the join prompt status label color: change from alarming red to neutral/positive green (`Color.Lime`) or golden-yellow (`Color.Gold`) when waiting/attempting connection with a valid 5-digit code.
+    - **E. Clean Forfeit & Disconnect Win Condition:**
+      - If an opponent disconnects mid-match, do not leave the remaining player stranded with a foul notification. Immediately trigger `GameState.GameOver` declaring the remaining connected player the victor by forfeit (`Opponent Left - You Win!`) with a direct button to return to the Main Menu.
+
+  - [x] **Step 3: Standalone Portable Packaging (.NET Runtime-Independent Release)**
+    - **Problem Identified:** Users running the game on bare Windows machines without the .NET 9 SDK/Runtime installed receive an execution failure ("A fatal error occurred. The required library hostfxr.dll could not be found").
+    - **Solution:** Package a truly self-contained, native bundle incorporating all required CoreCLR/hostfxr native binaries.
+    - **Execution Parameters:**
+      - Use `dotnet publish App/BilliardsGame.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true`
+      - Include asset bundling script that guarantees `Audio/` and all Raylib native c-libs (`raylib.dll`) are structured in the distribution archive for 100% "out-of-the-box" execution on any clean Windows machine.
+
 ---
 
 ## Module Specifications & Interface Contracts

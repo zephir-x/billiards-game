@@ -82,6 +82,11 @@ namespace BilliardsGame.Interfaces
         event Action<NotificationType>? OnNotificationEvent;
 
         /// <summary>
+        /// Event invoked upon any domain state transition, allowing authoritative host synchronization across network peers.
+        /// </summary>
+        event Action? OnStateTransition;
+
+        /// <summary>
         /// Propagates frame delta updates through domain logic, ticking active banners, evaluating decision timers, and triggering timeout fouls.
         /// </summary>
         /// <param name="deltaTime">Time elapsed in seconds since the previous update frame.</param>
@@ -115,5 +120,32 @@ namespace BilliardsGame.Interfaces
         /// </summary>
         /// <param name="pocket">The target pocket chosen by the active player.</param>
         void SelectTargetPocket(IPocket pocket);
+
+        /// <summary>
+        /// Resets the game manager state back into initial menu mode, halting active timers and match logic.
+        /// </summary>
+        void ResetToMenu();
+
+        /// <summary>
+        /// Instantly concludes the match awarding forfeit victory to the specified player (e.g. when opponent disconnects).
+        /// </summary>
+        /// <param name="winnerPlayerId">Identifier of the victorious remaining player (1 or 2).</param>
+        /// <param name="reason">Human-readable explanation of the forfeit victory.</param>
+        void ConcludeMatchByForfeit(int winnerPlayerId, string reason);
+
+        /// <summary>
+        /// Synchronizes authoritative game state directly onto client instance from host network packet.
+        /// </summary>
+        void ApplyAuthoritativeState(
+            GameState state,
+            int activePlayerId,
+            int p1Score,
+            int p2Score,
+            BallType? p1Type,
+            BallType? p2Type,
+            float remainingTurnTime,
+            string notification,
+            NotificationType notificationType,
+            int? winnerId);
     }
 }

@@ -187,7 +187,8 @@ namespace BilliardsGame.App
             var networkInputProvider = new NetworkInputProvider(
                 rawInputProvider,
                 networkService,
-                () => gameManager?.ActivePlayer?.Id ?? 1);
+                () => gameManager?.ActivePlayer?.Id ?? 1,
+                () => cueController.ResetCharge());
 
             gameManager = new GameManager(physicsEngine, cueController, networkInputProvider);
             
@@ -219,6 +220,33 @@ namespace BilliardsGame.App
                 audioManager.PlayGameOver(); 
                 audioManager.PlayBGM("menu", 0.6f); 
             };
+
+            // Authoritative Host: broadcast authoritative state upon domain transitions
+            Action broadcastTurnState = () =>
+            {
+                if (networkService.IsConnected && networkService.IsHost)
+                {
+                    var turnPacket = new TurnStatePacket(
+                        gameManager.CurrentState,
+                        gameManager.ActivePlayer.Id,
+                        gameManager.Player1.Score,
+                        gameManager.Player2.Score,
+                        gameManager.Player1.AssignedType,
+                        gameManager.Player2.AssignedType,
+                        gameManager.RemainingTurnTime,
+                        gameManager.NotificationMessage,
+                        gameManager.NotificationType,
+                        gameManager.Winner?.Id);
+                    networkService.SendPacket(NetworkPacketType.TurnState, turnPacket);
+                }
+            };
+
+            gameManager.OnStateTransition += () =>
+            {
+                cueController.ResetCharge();
+                networkInputProvider.ClearRemoteInputStates();
+                broadcastTurnState();
+            };
             
             // Presentational View linking exposing purely UI dependencies and masking physical constraints.
             var sceneData = new SceneParameters(gameManager, physicsEngine, cueController);
@@ -240,20 +268,46 @@ namespace BilliardsGame.App
                 audioManager.StopBGM("menu"); 
                 audioManager.PlayBGM("gameplay", 0.4f);
                 rawInputProvider.ConsumeClickForUI();
+                isPaused = false;
                 setupBalls();
                 gameManager.StartGame();
                 renderer.CurrentMenuView = MainMenuView.Main;
             };
 
+            Action returnToMainMenu = () =>
+            {
+                audioManager.PlayUIClick();
+                audioManager.StopBGM("gameplay");
+                audioManager.PlayBGM("menu", 0.6f);
+                rawInputProvider.ConsumeClickForUI();
+                isPaused = false;
+                if (networkService.IsConnected)
+                {
+                    networkService.Disconnect("Player returned to menu");
+                }
+                renderer.IsMultiplayerSession = false;
+                renderer.LocalPlayerId = 0;
+                renderer.HostRoomCode = string.Empty;
+                renderer.HostStatus = "Connecting to Relay...";
+                renderer.JoinStatus = string.Empty;
+                renderer.CurrentMenuView = MainMenuView.Main;
+                gameManager.ResetToMenu();
+            };
+
             // Wire UI Delegates executing domain changes bypassing tightly coupled loop architectures.
             renderer.OnPlayClicked = () => 
             { 
+                if (networkService.IsConnected) networkService.Disconnect("Switched to Local Play");
+                renderer.IsMultiplayerSession = false;
+                renderer.LocalPlayerId = 0;
                 startGameSession();
             };
 
             renderer.OnTrainingClicked = () => 
             { 
                 if (networkService.IsConnected) networkService.Disconnect("Switched to Training");
+                renderer.IsMultiplayerSession = false;
+                renderer.LocalPlayerId = 0;
                 startGameSession();
             };
 
@@ -295,8 +349,18 @@ namespace BilliardsGame.App
                 isPaused = false;
             };
 
+            renderer.OnGoToMenuClicked = () =>
+            {
+                returnToMainMenu();
+            };
+
             renderer.OnRestartClicked = () => 
             { 
+                if (renderer.IsMultiplayerSession)
+                {
+                    // In multiplayer, unilateral restart is not permitted
+                    return;
+                }
                 audioManager.PlayUIClick(); 
                 audioManager.StopBGM("menu"); 
                 audioManager.PlayBGM("gameplay", 0.4f);
@@ -315,9 +379,12 @@ namespace BilliardsGame.App
 
             networkService.OnConnected += (assignedPlayerId) =>
             {
+                renderer.IsMultiplayerSession = true;
+                renderer.LocalPlayerId = assignedPlayerId;
                 audioManager.PlaySFX("announcement", 0.6f);
                 startGameSession();
-                gameManager.SetNotification($"Online match connected! You are Player {assignedPlayerId}", NotificationType.Info, 4.0f);
+                string roleName = networkService.IsHost ? "Player 1 (Host)" : "Player 2 (Client)";
+                gameManager.SetNotification($"MATCH STARTED! You are {roleName}", NotificationType.Info, 5.0f);
             };
 
             networkService.OnConnectionFailed += (reason) =>
@@ -329,8 +396,41 @@ namespace BilliardsGame.App
 
             networkService.OnDisconnected += (reason) =>
             {
-                gameManager.SetNotification($"Opponent disconnected ({reason})", NotificationType.Foul, 5.0f);
-                audioManager.PlaySFX("foul", 0.4f);
+                if (renderer.IsMultiplayerSession &&
+                    gameManager.CurrentState != GameState.Menu &&
+                    gameManager.CurrentState != GameState.GameOver)
+                {
+                    // Opponent disconnected mid-match: award instant forfeit victory to local player!
+                    int localId = networkService.LocalPlayerId;
+                    gameManager.ConcludeMatchByForfeit(localId, "Opponent Left - You Win by Forfeit!");
+                    audioManager.PlaySFX("announcement", 0.8f);
+                }
+                else
+                {
+                    gameManager.SetNotification($"Opponent disconnected ({reason})", NotificationType.Foul, 5.0f);
+                    audioManager.PlaySFX("foul", 0.4f);
+                }
+            };
+
+            // Client turn state synchronization: adopt authoritative host referee state.
+            networkService.OnTurnStateReceived += (turnPacket) =>
+            {
+                if (!networkService.IsHost && turnPacket != null)
+                {
+                    gameManager.ApplyAuthoritativeState(
+                        turnPacket.State,
+                        turnPacket.ActivePlayerId,
+                        turnPacket.Player1Score,
+                        turnPacket.Player2Score,
+                        turnPacket.Player1AssignedType,
+                        turnPacket.Player2AssignedType,
+                        turnPacket.RemainingTurnTime,
+                        turnPacket.NotificationMessage,
+                        turnPacket.NotificationType,
+                        turnPacket.WinnerId);
+                    cueController.ResetCharge();
+                    networkInputProvider.ClearRemoteInputStates();
+                }
             };
 
             // Client physics synchronization: override local ball bodies with authoritative host snapshots.
@@ -355,6 +455,7 @@ namespace BilliardsGame.App
             const float dt = 1f / 480f;
             float physicsSyncTimer = 0f;
             const float physicsSyncInterval = 1f / 60f; // 60Hz physics stream
+            float turnSyncTimer = 0f;
 
             // Application Spinlock Sequence
             while (!Raylib.WindowShouldClose() && !shouldExit)
@@ -401,18 +502,31 @@ namespace BilliardsGame.App
                     }
 
                     // Authoritative Host: stream continuous physics state during SimulatingBalls.
-                    if (networkService.IsConnected && networkService.IsHost && gameManager.CurrentState == GameState.SimulatingBalls)
+                    if (networkService.IsConnected && networkService.IsHost)
                     {
-                        physicsSyncTimer += frameTime;
-                        if (physicsSyncTimer >= physicsSyncInterval)
+                        if (gameManager.CurrentState == GameState.SimulatingBalls)
                         {
-                            physicsSyncTimer = 0f;
-                            var snapshots = physicsEngine.GetBodies()
-                                .OfType<ICircleBody>()
-                                .Select(b => new BallSnapshot(b.Id, b.Position.X, b.Position.Y, b.Velocity.X, b.Velocity.Y))
-                                .ToList();
-                            var syncPacket = new PhysicsSyncPacket(snapshots, physicsEngine.AreAllBodiesAtRest());
-                            networkService.SendPacket(NetworkPacketType.PhysicsSync, syncPacket);
+                            physicsSyncTimer += frameTime;
+                            if (physicsSyncTimer >= physicsSyncInterval)
+                            {
+                                physicsSyncTimer = 0f;
+                                var snapshots = physicsEngine.GetBodies()
+                                    .OfType<ICircleBody>()
+                                    .Select(b => new BallSnapshot(b.Id, b.Position.X, b.Position.Y, b.Velocity.X, b.Velocity.Y))
+                                    .ToList();
+                                var syncPacket = new PhysicsSyncPacket(snapshots, physicsEngine.AreAllBodiesAtRest());
+                                networkService.SendPacket(NetworkPacketType.PhysicsSync, syncPacket);
+                            }
+                        }
+                        else
+                        {
+                            // Authoritative Host: periodically refresh turn state and remaining timer on client.
+                            turnSyncTimer += frameTime;
+                            if (turnSyncTimer >= 0.5f)
+                            {
+                                turnSyncTimer = 0f;
+                                broadcastTurnState();
+                            }
                         }
                     }
                 }
