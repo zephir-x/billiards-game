@@ -31,7 +31,10 @@ namespace BilliardsGame.Network.Services
         private readonly object _sendLock = new object();
 
         // Reusable receive buffer and stream accumulator state.
-        private readonly byte[] _receiveBuffer = new byte[65536];
+        // Initial capacity: 64 KB; dynamically resizable up to MaxReceiveBufferSize to preserve partial TCP packets.
+        private const int InitialBufferSize = 65536;
+        private const int MaxReceiveBufferSize = 1024 * 1024; // 1 MB hard limit
+        private byte[] _receiveBuffer = new byte[InitialBufferSize];
         private int _accumulatedBytes = 0;
 
         /// <inheritdoc />
@@ -293,14 +296,19 @@ namespace BilliardsGame.Network.Services
             {
                 while (!token.IsCancellationRequested && _stream != null && _client != null && _client.Connected)
                 {
-                    // Read available chunk into accumulator buffer space.
-                    int spaceRemaining = _receiveBuffer.Length - _accumulatedBytes;
-                    if (spaceRemaining <= 0)
+                    // Check if accumulator requires expansion to accommodate incoming frame fragments.
+                    if (_accumulatedBytes >= _receiveBuffer.Length)
                     {
-                        // Buffer overrun protection: reset accumulator to prevent memory corruption.
-                        _accumulatedBytes = 0;
-                        spaceRemaining = _receiveBuffer.Length;
+                        if (_receiveBuffer.Length >= MaxReceiveBufferSize)
+                        {
+                            throw new InvalidDataException($"Inbound network packet buffer exceeded hard limit of {MaxReceiveBufferSize} bytes.");
+                        }
+
+                        int newSize = Math.Min(_receiveBuffer.Length * 2, MaxReceiveBufferSize);
+                        Array.Resize(ref _receiveBuffer, newSize);
                     }
+
+                    int spaceRemaining = _receiveBuffer.Length - _accumulatedBytes;
 
                     int bytesRead = await _stream.ReadAsync(_receiveBuffer.AsMemory(_accumulatedBytes, spaceRemaining), token);
                     if (bytesRead == 0)
@@ -503,6 +511,10 @@ namespace BilliardsGame.Network.Services
                 _listener = null;
                 _cts = null;
                 _accumulatedBytes = 0;
+                if (_receiveBuffer.Length > InitialBufferSize)
+                {
+                    _receiveBuffer = new byte[InitialBufferSize];
+                }
             }
         }
 
