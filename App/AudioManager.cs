@@ -148,6 +148,28 @@ namespace BilliardsGame.App
         }
 
         /// <inheritdoc />
+        public void StopSFX(string name)
+        {
+            if (_sfxTracks.TryGetValue(name, out var sound))
+            {
+                if (Raylib.IsSoundPlaying(sound))
+                {
+                    Raylib.StopSound(sound);
+                }
+            }
+        }
+
+        /// <inheritdoc />
+        public bool IsSFXPlaying(string name)
+        {
+            if (_sfxTracks.TryGetValue(name, out var sound))
+            {
+                return Raylib.IsSoundPlaying(sound);
+            }
+            return false;
+        }
+
+        /// <inheritdoc />
         public void PlayCushionHit(float impactForce)
         {
             // Scales output bounds proportionately relative directly to engine mass/velocity impulses.

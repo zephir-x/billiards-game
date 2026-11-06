@@ -42,6 +42,12 @@ namespace BilliardsGame.Interfaces
         void ResetCharge();
 
         /// <summary>
+        /// Explicitly sets the remote cue charge power synchronized from the remote opponent during their turn.
+        /// </summary>
+        /// <param name="power">Remote power scalar clamped to [0.0, 1.0].</param>
+        void SetRemotePower(float power);
+
+        /// <summary>
         /// Converts accumulated power into a physical impulse and strikes the given cue ball.
         /// </summary>
         /// <param name="cueBall">The body representing the cue ball.</param>

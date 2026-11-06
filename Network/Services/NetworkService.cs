@@ -83,6 +83,9 @@ namespace BilliardsGame.Network.Services
         public event Action<TurnStatePacket>? OnTurnStateReceived;
 
         /// <inheritdoc />
+        public event Action<CallPocketPacket>? OnCallPocketReceived;
+
+        /// <inheritdoc />
         public void StartHost(int port = 7777)
         {
             // Terminate existing connections before binding new host socket.
@@ -110,96 +113,123 @@ namespace BilliardsGame.Network.Services
         }
 
         /// <inheritdoc />
-        public async Task<bool> HostViaRelayAsync(string relayHost, int relayPort = 7777, int timeoutMs = 5000)
+        public async Task<bool> HostViaRelayAsync(string relayHost, int relayPort = 7777, int timeoutMs = 15000)
         {
-            Disconnect("Connecting to relay server as Host");
-
-            Port = relayPort;
-            IsHost = true;
-            LocalPlayerId = 1;
-            RemoteAddress = relayHost;
-            RoomCode = string.Empty;
-            _cts = new CancellationTokenSource();
-
-            try
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
-                _client = new TcpClient
+                Disconnect("Connecting to relay server as Host");
+
+                Port = relayPort;
+                IsHost = true;
+                LocalPlayerId = 1;
+                RemoteAddress = relayHost;
+                RoomCode = string.Empty;
+                _cts = new CancellationTokenSource();
+
+                try
                 {
-                    NoDelay = true,
-                    ReceiveBufferSize = 65536,
-                    SendBufferSize = 65536
-                };
+                    _client = new TcpClient
+                    {
+                        NoDelay = true,
+                        ReceiveBufferSize = 65536,
+                        SendBufferSize = 65536
+                    };
 
-                using var timeoutCts = new CancellationTokenSource(timeoutMs);
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeoutCts.Token);
+                    using var timeoutCts = new CancellationTokenSource(timeoutMs);
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeoutCts.Token);
 
-                await _client.ConnectAsync(relayHost, relayPort, linkedCts.Token);
-                _stream = _client.GetStream();
+                    // Prioritize IPv4 resolution to prevent Windows dual-stack IPv6 DNS delays
+                    var addresses = await Dns.GetHostAddressesAsync(relayHost, linkedCts.Token);
+                    var targetIp = Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork) ?? addresses[0];
 
-                // Start background reader loop.
-                _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+                    await _client.ConnectAsync(targetIp, relayPort, linkedCts.Token);
+                    _stream = _client.GetStream();
 
-                // Send Relay room creation request.
-                SendPacket(NetworkPacketType.RelayControl, new RelayControlPacket
+                    // Start background reader loop.
+                    _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+
+                    // Send Relay room creation request.
+                    SendPacket(NetworkPacketType.RelayControl, new RelayControlPacket
+                    {
+                        Action = RelayAction.CreateRoom
+                    });
+
+                    return true;
+                }
+                catch (Exception ex)
                 {
-                    Action = RelayAction.CreateRoom
-                });
-
-                return true;
+                    if (attempt == 1)
+                    {
+                        // Immediate transparent retry if first attempt encountered a cold socket or DNS delay
+                        await Task.Delay(200);
+                        continue;
+                    }
+                    _mainThreadQueue.Enqueue(() => OnConnectionFailed?.Invoke($"Relay connection failed: {ex.Message}"));
+                    Disconnect("Relay connection attempt failed");
+                    return false;
+                }
             }
-            catch (Exception ex)
-            {
-                _mainThreadQueue.Enqueue(() => OnConnectionFailed?.Invoke($"Relay connection failed: {ex.Message}"));
-                Disconnect("Relay connection attempt failed");
-                return false;
-            }
+            return false;
         }
 
         /// <inheritdoc />
-        public async Task<bool> JoinViaRelayAsync(string relayHost, int relayPort, string roomCode, int timeoutMs = 5000)
+        public async Task<bool> JoinViaRelayAsync(string relayHost, int relayPort, string roomCode, int timeoutMs = 15000)
         {
-            Disconnect("Connecting to relay server as Client");
-
-            Port = relayPort;
-            IsHost = false;
-            LocalPlayerId = 2;
-            RemoteAddress = relayHost;
-            RoomCode = roomCode.Trim();
-            _cts = new CancellationTokenSource();
-
-            try
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
-                _client = new TcpClient
+                Disconnect("Connecting to relay server as Client");
+
+                Port = relayPort;
+                IsHost = false;
+                LocalPlayerId = 2;
+                RemoteAddress = relayHost;
+                RoomCode = roomCode.Trim();
+                _cts = new CancellationTokenSource();
+
+                try
                 {
-                    NoDelay = true,
-                    ReceiveBufferSize = 65536,
-                    SendBufferSize = 65536
-                };
+                    _client = new TcpClient
+                    {
+                        NoDelay = true,
+                        ReceiveBufferSize = 65536,
+                        SendBufferSize = 65536
+                    };
 
-                using var timeoutCts = new CancellationTokenSource(timeoutMs);
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeoutCts.Token);
+                    using var timeoutCts = new CancellationTokenSource(timeoutMs);
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeoutCts.Token);
 
-                await _client.ConnectAsync(relayHost, relayPort, linkedCts.Token);
-                _stream = _client.GetStream();
+                    // Prioritize IPv4 resolution to prevent Windows dual-stack IPv6 DNS delays
+                    var addresses = await Dns.GetHostAddressesAsync(relayHost, linkedCts.Token);
+                    var targetIp = Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork) ?? addresses[0];
 
-                // Start background reader loop.
-                _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+                    await _client.ConnectAsync(targetIp, relayPort, linkedCts.Token);
+                    _stream = _client.GetStream();
 
-                // Send Relay room join request with 5-digit code.
-                SendPacket(NetworkPacketType.RelayControl, new RelayControlPacket
+                    // Start background reader loop.
+                    _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+
+                    // Send Relay room join request with 5-digit code.
+                    SendPacket(NetworkPacketType.RelayControl, new RelayControlPacket
+                    {
+                        Action = RelayAction.JoinRoom,
+                        RoomCode = RoomCode
+                    });
+
+                    return true;
+                }
+                catch (Exception ex)
                 {
-                    Action = RelayAction.JoinRoom,
-                    RoomCode = RoomCode
-                });
-
-                return true;
+                    if (attempt == 1)
+                    {
+                        await Task.Delay(200);
+                        continue;
+                    }
+                    _mainThreadQueue.Enqueue(() => OnConnectionFailed?.Invoke($"Relay join failed: {ex.Message}"));
+                    Disconnect("Relay join attempt failed");
+                    return false;
+                }
             }
-            catch (Exception ex)
-            {
-                _mainThreadQueue.Enqueue(() => OnConnectionFailed?.Invoke($"Relay join failed: {ex.Message}"));
-                Disconnect("Relay join attempt failed");
-                return false;
-            }
+            return false;
         }
 
         /// <inheritdoc />
@@ -414,6 +444,13 @@ namespace BilliardsGame.Network.Services
                     if (packet is DisconnectPacket disc)
                     {
                         _mainThreadQueue.Enqueue(() => OnDisconnected?.Invoke($"Opponent disconnected: {disc.Reason}"));
+                    }
+                    break;
+
+                case NetworkPacketType.CallPocket:
+                    if (packet is CallPocketPacket callPocket)
+                    {
+                        _mainThreadQueue.Enqueue(() => OnCallPocketReceived?.Invoke(callPocket));
                     }
                     break;
             }

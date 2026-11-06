@@ -117,5 +117,104 @@ namespace BilliardsGame.Network.Tests
             Assert.True(provider.WasLeftMouseReleased);
             Assert.True(cueResetCalled);
         }
+
+        /// <summary>
+        /// Validates that releasing the mouse button while the cue is in an overheated state does NOT transmit a shot packet
+        /// and instead invokes the cue reset action to cancel the strike attempt.
+        /// </summary>
+        [Fact]
+        public void OnlineMode_LocalTurn_WhenOverheated_CancelsShotAndPreservesCoolingAnimation()
+        {
+            var localInputMock = new Mock<IInputProvider>();
+            var networkMock = new Mock<INetworkService>();
+            networkMock.SetupGet(n => n.IsConnected).Returns(true);
+            networkMock.SetupGet(n => n.IsHost).Returns(false);
+            networkMock.SetupGet(n => n.LocalPlayerId).Returns(2);
+
+            localInputMock.SetupGet(i => i.WasLeftMouseReleased).Returns(true);
+
+            bool cueResetInvoked = false;
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2, () => { cueResetInvoked = true; });
+
+            // Call Update with power > 0 but isOverheated = true
+            provider.Update(0.016f, new Vector2(1f, 0f), 0.7f, isCharging: false, isOverheated: true);
+
+            // Assert that ShotExecution packet was NEVER sent and cue charge was NOT abruptly cleared (so cooling animation plays out)
+            networkMock.Verify(n => n.SendPacket(NetworkPacketType.ShotExecution, It.IsAny<ShotExecutionPacket>()), Times.Never);
+            Assert.False(cueResetInvoked);
+        }
+
+        /// <summary>
+        /// Validates that releasing the mouse button while charging with valid power and no overheat transmits a ShotExecution packet.
+        /// </summary>
+        [Fact]
+        public void OnlineMode_ClientTurn_WhenValidPower_SendsShotExecutionPacket()
+        {
+            var localInputMock = new Mock<IInputProvider>();
+            var networkMock = new Mock<INetworkService>();
+            networkMock.SetupGet(n => n.IsConnected).Returns(true);
+            networkMock.SetupGet(n => n.IsHost).Returns(false);
+            networkMock.SetupGet(n => n.LocalPlayerId).Returns(2);
+
+            localInputMock.SetupGet(i => i.WasLeftMouseReleased).Returns(true);
+
+            bool cueResetInvoked = false;
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 2, () => { cueResetInvoked = true; });
+
+            // Call Update with power 0.8 and isOverheated = false
+            provider.Update(0.016f, new Vector2(1f, 0f), 0.8f, isCharging: false, isOverheated: false);
+
+            // Assert that ShotExecution packet was sent exactly once and cue charge was cleanly reset
+            networkMock.Verify(n => n.SendPacket(NetworkPacketType.ShotExecution, It.IsAny<ShotExecutionPacket>()), Times.Once);
+            Assert.True(cueResetInvoked);
+        }
+
+        /// <summary>
+        /// Validates that when canShoot is false (such as in BallInHand or CallingPocket), mouse release does NOT transmit ShotExecution packet.
+        /// </summary>
+        [Fact]
+        public void OnlineMode_LocalTurn_WhenCannotShoot_SuppressesShotExecutionPacket()
+        {
+            var localInputMock = new Mock<IInputProvider>();
+            var networkMock = new Mock<INetworkService>();
+            networkMock.SetupGet(n => n.IsConnected).Returns(true);
+            networkMock.SetupGet(n => n.LocalPlayerId).Returns(1);
+
+            localInputMock.SetupGet(i => i.WasLeftMouseReleased).Returns(true);
+
+            bool cueResetInvoked = false;
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 1, () => { cueResetInvoked = true; });
+
+            // Call Update with power 0.8 but canShoot = false
+            provider.Update(0.016f, new Vector2(1f, 0f), 0.8f, isCharging: false, isOverheated: false, canShoot: false);
+
+            networkMock.Verify(n => n.SendPacket(NetworkPacketType.ShotExecution, It.IsAny<ShotExecutionPacket>()), Times.Never);
+            Assert.False(cueResetInvoked);
+        }
+        /// <summary>
+        /// Validates that on Authoritative Host, releasing mouse with valid power does NOT send a ShotExecution packet
+        /// and does NOT wipe cue power locally, allowing GameManager domain logic to execute the strike directly.
+        /// </summary>
+        [Fact]
+        public void OnlineMode_HostTurn_WhenValidPower_DoesNotSendShotExecutionPacket_AndPreservesCueCharge()
+        {
+            var localInputMock = new Mock<IInputProvider>();
+            var networkMock = new Mock<INetworkService>();
+            networkMock.SetupGet(n => n.IsConnected).Returns(true);
+            networkMock.SetupGet(n => n.IsHost).Returns(true);
+            networkMock.SetupGet(n => n.LocalPlayerId).Returns(1);
+
+            localInputMock.SetupGet(i => i.WasLeftMouseReleased).Returns(true);
+
+            bool cueResetInvoked = false;
+            var provider = new NetworkInputProvider(localInputMock.Object, networkMock.Object, () => 1, () => { cueResetInvoked = true; });
+
+            // Call Update with power 0.8 on Host
+            provider.Update(0.016f, new Vector2(1f, 0f), 0.8f, isCharging: false, isOverheated: false);
+
+            // Assert that Host does NOT send shot packet and does NOT reset cue power prematurely
+            networkMock.Verify(n => n.SendPacket(NetworkPacketType.ShotExecution, It.IsAny<ShotExecutionPacket>()), Times.Never);
+            Assert.False(cueResetInvoked);
+        }
     }
 }

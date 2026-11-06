@@ -29,6 +29,11 @@ namespace BilliardsGame.Network.Input
         private const float AimSyncInterval = 1f / 60f; // 60Hz telemetry stream
 
         /// <summary>
+        /// Synchronized shot charge power received from remote opponent during opponent's turn.
+        /// </summary>
+        public float RemotePower { get; private set; }
+
+        /// <summary>
         /// Instantiates the network input proxy with decoupled local input, network dependencies, and cue reset delegate.
         /// </summary>
         /// <param name="localInputProvider">Local hardware peripheral input provider.</param>
@@ -113,6 +118,7 @@ namespace BilliardsGame.Network.Input
         /// </summary>
         public void ClearRemoteInputStates()
         {
+            RemotePower = 0f;
             _remotePressed = false;
             _remoteDown = false;
             _remoteReleased = false;
@@ -125,7 +131,9 @@ namespace BilliardsGame.Network.Input
         /// <param name="cueDirection">Current cue aiming direction vector.</param>
         /// <param name="power">Current cue charging power scalar.</param>
         /// <param name="isCharging">Whether local participant is charging shot.</param>
-        public void Update(float deltaTime, Vector2 cueDirection, float power, bool isCharging)
+        /// <param name="isOverheated">Whether the cue charge is currently in an overheated penalty state.</param>
+        /// <param name="canShoot">Whether the game is currently in an aiming/charging state eligible to execute a shot.</param>
+        public void Update(float deltaTime, Vector2 cueDirection, float power, bool isCharging, bool isOverheated = false, bool canShoot = true)
         {
             // Clear one-shot edge-triggered remote states.
             if (_remotePressed) _remotePressed = false;
@@ -134,12 +142,24 @@ namespace BilliardsGame.Network.Input
             // In online session during local turn, stream telemetry to remote peer.
             if (_networkService.IsConnected && IsMyTurn)
             {
-                // Detect local shot release trigger and broadcast shot execution packet.
-                if (_localInputProvider.WasLeftMouseReleased && power > 0f)
+                // Detect local shot release trigger and broadcast shot execution packet ONLY from Client to Host.
+                // On Authoritative Host, strokes are executed directly by GameManager domain logic locally;
+                // Host never dispatches ShotExecution nor wipes cue charge before GameManager consumes it.
+                if (!_networkService.IsHost && _localInputProvider.WasLeftMouseReleased)
                 {
-                    var impulse = cueDirection * (power * 500f);
-                    var shotPacket = new ShotExecutionPacket(impulse.X, impulse.Y, cueDirection.X, cueDirection.Y, power);
-                    _networkService.SendPacket(NetworkPacketType.ShotExecution, shotPacket);
+                    if (isOverheated)
+                    {
+                        // Overheat penalty: cancel strike without dispatching shot.
+                        // Preserve cooling animation; cue controller will smoothly decay power back to 0.0.
+                    }
+                    else if (canShoot && power > 0.02f)
+                    {
+                        var impulse = cueDirection * (power * 500f);
+                        var shotPacket = new ShotExecutionPacket(impulse.X, impulse.Y, cueDirection.X, cueDirection.Y, power);
+                        _networkService.SendPacket(NetworkPacketType.ShotExecution, shotPacket);
+                        // Immediately reset local cue charge and clear power after dispatching shot
+                        _onForceResetCue?.Invoke();
+                    }
                 }
 
                 _aimSyncTimer += deltaTime;
@@ -182,6 +202,7 @@ namespace BilliardsGame.Network.Input
         {
             if (!IsMyTurn)
             {
+                RemotePower = packet.Power;
                 _remoteMousePosition = new Vector2(packet.MouseWorldX, packet.MouseWorldY);
                 if (packet.IsCharging && !_remoteDown)
                 {
@@ -216,6 +237,7 @@ namespace BilliardsGame.Network.Input
         {
             if (!IsMyTurn)
             {
+                RemotePower = 0f;
                 _remoteDown = false;
                 _remoteReleased = true;
                 _onForceResetCue?.Invoke();

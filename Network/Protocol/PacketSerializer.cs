@@ -111,6 +111,7 @@ namespace BilliardsGame.Network.Protocol
                 NetworkPacketType.TurnState => JsonSerializer.Deserialize<TurnStatePacket>(payloadSpan, JsonOptions),
                 NetworkPacketType.Disconnect => JsonSerializer.Deserialize<DisconnectPacket>(payloadSpan, JsonOptions),
                 NetworkPacketType.RelayControl => JsonSerializer.Deserialize<RelayControlPacket>(payloadSpan, JsonOptions),
+                NetworkPacketType.CallPocket => JsonSerializer.Deserialize<CallPocketPacket>(payloadSpan, JsonOptions),
                 _ => null
             };
 
