@@ -114,8 +114,10 @@ namespace BilliardsGame.Network.Protocol
                 _ => null
             };
 
+            // Advance stream consumption by the full frame size even if deserialization returned null.
+            // Returning true indicates a complete frame was processed, preventing buffer stalling on unknown payloads.
             bytesConsumed = totalFrameLength;
-            return packet != null;
+            return true;
         }
     }
 }

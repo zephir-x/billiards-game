@@ -430,7 +430,3 @@ namespace BilliardsGame.App
         }
     }
 }
-
-
-
-

@@ -307,5 +307,25 @@ namespace BilliardsGame.Network.Tests
                 PacketSerializer.TryDeserialize(corruptedBuffer, corruptedBuffer.Length, out _, out _, out _);
             });
         }
+
+        /// <summary>
+        /// Validates that encountering an unknown packet type consumes the frame and returns true with a null packet payload,
+        /// ensuring the stream reader advances its buffer rather than entering an infinite parsing loop.
+        /// </summary>
+        [Fact]
+        public void TryDeserialize_UnknownPacketType_ConsumesFrameAndReturnsNullPayload()
+        {
+            // Construct a valid length frame (4 bytes header + 1 byte unknown type + 4 bytes dummy payload)
+            byte[] frame = new byte[9];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(0, 4), 5); // frameDataLength = 5
+            frame[4] = 255; // Unknown packet type discriminator
+
+            bool success = PacketSerializer.TryDeserialize(frame, frame.Length, out var type, out var packet, out int consumed);
+
+            Assert.True(success);
+            Assert.Equal((NetworkPacketType)255, type);
+            Assert.Null(packet);
+            Assert.Equal(9, consumed);
+        }
     }
 }

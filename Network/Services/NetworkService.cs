@@ -27,6 +27,9 @@ namespace BilliardsGame.Network.Services
         // Thread-safe dispatch queue forwarding network callbacks to the main game loop thread.
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
 
+        // Synchronization primitive guaranteeing thread-safe sequential writes to the underlying TCP stream.
+        private readonly object _sendLock = new object();
+
         // Reusable receive buffer and stream accumulator state.
         private readonly byte[] _receiveBuffer = new byte[65536];
         private int _accumulatedBytes = 0;
@@ -445,8 +448,11 @@ namespace BilliardsGame.Network.Services
             try
             {
                 byte[] framedData = PacketSerializer.Serialize(type, payload);
-                _stream.Write(framedData, 0, framedData.Length);
-                _stream.Flush();
+                lock (_sendLock)
+                {
+                    _stream.Write(framedData, 0, framedData.Length);
+                    _stream.Flush();
+                }
             }
             catch (Exception ex)
             {
