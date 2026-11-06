@@ -1,4 +1,4 @@
-﻿using BilliardsGame.Interfaces.Enums;
+﻿﻿using BilliardsGame.Interfaces.Enums;
 using BilliardsGame.Interfaces.Models;
 using System;
 using System.Numerics;
@@ -7,6 +7,32 @@ using Raylib_cs;
 
 namespace BilliardsGame.App
 {
+    /// <summary>
+    /// Identifies the distinct active view state inside the main menu navigation hierarchy.
+    /// </summary>
+    public enum MainMenuView
+    {
+        /// <summary>
+        /// Root landing view offering Training, Play Online, and Exit options.
+        /// </summary>
+        Main,
+
+        /// <summary>
+        /// Multiplayer lobby hub offering Host Room, Join Room, and Back navigation.
+        /// </summary>
+        OnlineLobby,
+
+        /// <summary>
+        /// Host waiting screen displaying the assigned 5-digit room code and listening status.
+        /// </summary>
+        HostWaiting,
+
+        /// <summary>
+        /// Join room screen providing interactive keyboard input for the 5-digit room code.
+        /// </summary>
+        JoinPrompt
+    }
+
     /// <summary>
     /// Master visualization mapping component interfacing exclusively with Raylib primitives.
     /// Operates completely disconnected from physical integrations relying solely on structural snapshots passed from the Scene layer.
@@ -26,6 +52,26 @@ namespace BilliardsGame.App
         
         /// <inheritdoc />
         public Action? OnPlayClicked { get; set; }
+
+        /// <summary>
+        /// Dispatched when the user initiates a local offline training or hotseat match.
+        /// </summary>
+        public Action? OnTrainingClicked { get; set; }
+
+        /// <summary>
+        /// Dispatched when the user clicks Host Game in the online lobby.
+        /// </summary>
+        public Action? OnHostGameClicked { get; set; }
+
+        /// <summary>
+        /// Dispatched when the user confirms joining an online match with a 5-digit room code.
+        /// </summary>
+        public Action<string>? OnJoinGameClicked { get; set; }
+
+        /// <summary>
+        /// Dispatched when the user cancels an active hosting or waiting sequence.
+        /// </summary>
+        public Action? OnCancelLobbyClicked { get; set; }
         
         /// <inheritdoc />
         public Action? OnExitClicked { get; set; }
@@ -40,6 +86,29 @@ namespace BilliardsGame.App
         /// Local explicit trigger hooking audio playback loops strictly isolating the domain UI bindings out of the rendering arrays.
         /// </summary>
         public Action? OnButtonHovered { get; set; }
+
+        /// <summary>
+        /// Current sub-view state displayed within the menu sliding overlay.
+        /// </summary>
+        public MainMenuView CurrentMenuView { get; set; } = MainMenuView.Main;
+
+        /// <summary>
+        /// The 5-digit room code assigned to the host room by the relay server.
+        /// </summary>
+        public string HostRoomCode { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Status text displayed on the host waiting screen.
+        /// </summary>
+        public string HostStatus { get; set; } = "Connecting to Relay...";
+
+        /// <summary>
+        /// Informational or error text displayed on the join prompt screen.
+        /// </summary>
+        public string JoinStatus { get; set; } = string.Empty;
+
+        // Internal keyboard buffer storing user input for the 5-digit room code.
+        private string _joinCodeInput = string.Empty;
         
         private string _lastHoveredId = "none";
         
@@ -245,7 +314,7 @@ namespace BilliardsGame.App
                 Raylib.DrawCircleV(mouseWorld, 10f, placementColor);
             }
 
-            // Interface visualizing exact physical strike sequences based on accumulated kinematic telemetry.
+            // Interface visualizing exact physical strike sequences based on accumulated kinetic telemetry.
             if (_sceneData != null && (_sceneData.CurrentState == GameState.ChargingShot || _sceneData.CurrentState == GameState.PlayerTurn))
             {
                 var cueBall = GetCueBall();
@@ -357,6 +426,9 @@ namespace BilliardsGame.App
                     Raylib.DrawText($"Type: {p2Type}", p2X + boxW/2 - Raylib.MeasureText($"Type: {p2Type}", valSize)/2, p2Y + 55, valSize, Color.LightGray);
                     Raylib.DrawText($"Pocketed: {p2Pocketed}/7", p2X + boxW/2 - Raylib.MeasureText($"Pocketed: {p2Pocketed}/7", valSize)/2, p2Y + 90, valSize, p2ScoreColor);
 
+                    // Turn Countdown Timer Badge Display
+                    DrawTurnTimerHUD();
+
                     // Dynamic Power bar overlay matching cue states natively reflecting valid/broken overheat mechanics.
                     if (_sceneData.CueInfo != null)
                     {
@@ -385,12 +457,47 @@ namespace BilliardsGame.App
                     }
                 }
                 
-                if (_menuXOffset > -1599f) DrawMainMenu(_menuXOffset);
+                if (_menuXOffset > -1599f) DrawMenuContainer(_menuXOffset);
                 if (_gameOverXOffset < 1599f) DrawGameOverMenu(_gameOverXOffset);
                 if (_pauseXOffset > -1599f) DrawPauseMenu(_pauseXOffset);
             }
 
             Raylib.EndDrawing();
+        }
+
+        /// <summary>
+        /// Renders the turn timer circular gauge and countdown text dynamically shifting colors when below critical threshold.
+        /// </summary>
+        private void DrawTurnTimerHUD()
+        {
+            if (_sceneData == null) return;
+
+            float remainingSeconds = _sceneData.TurnTimer;
+            if (remainingSeconds < 0f) remainingSeconds = 0f;
+
+            int activeId = _sceneData.CurrentTurnPlayer?.Id ?? 1;
+            int badgeW = 160;
+            int badgeH = 36;
+            int badgeX = (activeId == 1) ? (20 + (280 - badgeW) / 2) : (1600 - 20 - 280 + (280 - badgeW) / 2);
+            int badgeY = 160;
+
+            Rectangle badgeRect = new Rectangle(badgeX, badgeY, badgeW, badgeH);
+            Raylib.DrawRectangleRounded(badgeRect, 0.5f, 12, new Color(20, 20, 25, 230));
+
+            // Dynamic urgency color calculation: Normal Gold, flashing red below 5 seconds.
+            Color timerColor = Color.Gold;
+            if (remainingSeconds <= 5.0f)
+            {
+                float pulse = (float)Math.Sin(Raylib.GetTime() * 12.0) * 0.5f + 0.5f;
+                timerColor = new Color(255, (int)(50 + 100 * pulse), 50, 255);
+            }
+
+            Raylib.DrawRectangleRoundedLines(badgeRect, 0.5f, 12, timerColor);
+
+            string timerText = $"Time: {remainingSeconds:F1}s";
+            int fontSize = 20;
+            int textW = Raylib.MeasureText(timerText, fontSize);
+            Raylib.DrawText(timerText, badgeX + (badgeW - textW) / 2, badgeY + (badgeH - fontSize) / 2, fontSize, timerColor);
         }
         
         private bool DrawModernButton(Rectangle rect, string text, bool isHoverED)
@@ -416,6 +523,31 @@ namespace BilliardsGame.App
             return isHoverED;
         }
 
+        /// <summary>
+        /// Routes rendering of the sliding menu container to the active sub-view according to <see cref="CurrentMenuView"/>.
+        /// </summary>
+        private void DrawMenuContainer(float offsetX)
+        {
+            switch (CurrentMenuView)
+            {
+                case MainMenuView.Main:
+                    DrawMainMenu(offsetX);
+                    break;
+                case MainMenuView.OnlineLobby:
+                    DrawOnlineLobbyMenu(offsetX);
+                    break;
+                case MainMenuView.HostWaiting:
+                    DrawHostWaitingMenu(offsetX);
+                    break;
+                case MainMenuView.JoinPrompt:
+                    DrawJoinPromptMenu(offsetX);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Renders the root main menu view offering Play Online, Training (local hotseat), and Exit.
+        /// </summary>
         private void DrawMainMenu(float offsetX)
         {
             int screenW = 1600; int screenH = 900;
@@ -423,30 +555,227 @@ namespace BilliardsGame.App
             Vector2 mousePos = Raylib.GetMousePosition();
             bool isClick = Raylib.IsMouseButtonReleased(MouseButton.Left);
 
-            int btnWidth = 260; int btnHeight = 70; int gap = 40;
-            int startX = (screenW - (btnWidth * 2 + gap)) / 2 + (int)offsetX;
-            int startY = screenH / 2 - btnHeight / 2 + 50;
+            int btnWidth = 280; int btnHeight = 65; int gap = 20;
+            int startX = (screenW - btnWidth) / 2 + (int)offsetX;
+            int startY = screenH / 2 - 40;
 
             int titleW = Raylib.MeasureText("2D Billiards", 100);
-            Raylib.DrawText("2D Billiards", (int)offsetX + screenW / 2 - titleW / 2, 200, 100, Color.RayWhite);
+            Raylib.DrawText("2D Billiards", (int)offsetX + screenW / 2 - titleW / 2, 170, 100, Color.RayWhite);
             
-            Raylib.DrawText("Zephir Edition", (int)offsetX + screenW / 2 - Raylib.MeasureText("Zephir Edition", 30) / 2, 310, 30, Color.Gold);
+            Raylib.DrawText("Zephir Edition", (int)offsetX + screenW / 2 - Raylib.MeasureText("Zephir Edition", 30) / 2, 280, 30, Color.Gold);
 
-            Rectangle playRect = new Rectangle(startX, startY, btnWidth, btnHeight);
-            Rectangle exitRect = new Rectangle(startX + btnWidth + gap, startY, btnWidth, btnHeight);
+            Rectangle onlineRect = new Rectangle(startX, startY, btnWidth, btnHeight);
+            Rectangle trainRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
+            Rectangle exitRect = new Rectangle(startX, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
 
-            bool playHover = Raylib.CheckCollisionPointRec(mousePos, playRect);
+            bool onlineHover = Raylib.CheckCollisionPointRec(mousePos, onlineRect);
+            bool trainHover = Raylib.CheckCollisionPointRec(mousePos, trainRect);
             bool exitHover = Raylib.CheckCollisionPointRec(mousePos, exitRect);
-            string currentHover = playHover ? "play" : (exitHover ? "exit" : "none");
+
+            string currentHover = onlineHover ? "online" : (trainHover ? "train" : (exitHover ? "exit" : "none"));
             if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
             _lastHoveredId = currentHover;
 
-            DrawModernButton(playRect, "Play", playHover);
+            DrawModernButton(onlineRect, "Play Online", onlineHover);
+            DrawModernButton(trainRect, "Training", trainHover);
             DrawModernButton(exitRect, "Exit", exitHover);
 
-            if (playHover && isClick) OnPlayClicked?.Invoke();
+            if (onlineHover && isClick) CurrentMenuView = MainMenuView.OnlineLobby;
+            if (trainHover && isClick) OnTrainingClicked?.Invoke();
             if (exitHover && isClick) OnExitClicked?.Invoke();
-        }        
+        }
+
+        /// <summary>
+        /// Renders the online multiplayer lobby screen with Host, Join, and Back navigation.
+        /// </summary>
+        private void DrawOnlineLobbyMenu(float offsetX)
+        {
+            int screenW = 1600; int screenH = 900;
+            Raylib.DrawRectangle(0, 0, screenW, screenH, new Color(0, 0, 0, (int)Math.Clamp(210 * (1f - Math.Abs(offsetX)/1600f), 0, 255)));
+            Vector2 mousePos = Raylib.GetMousePosition();
+            bool isClick = Raylib.IsMouseButtonReleased(MouseButton.Left);
+
+            int titleW = Raylib.MeasureText("ONLINE MULTIPLAYER", 60);
+            Raylib.DrawText("ONLINE MULTIPLAYER", (int)offsetX + screenW / 2 - titleW / 2, 180, 60, Color.RayWhite);
+
+            int btnWidth = 320; int btnHeight = 65; int gap = 24;
+            int startX = (screenW - btnWidth) / 2 + (int)offsetX;
+            int startY = screenH / 2 - 40;
+
+            Rectangle hostRect = new Rectangle(startX, startY, btnWidth, btnHeight);
+            Rectangle joinRect = new Rectangle(startX, startY + btnHeight + gap, btnWidth, btnHeight);
+            Rectangle backRect = new Rectangle(startX, startY + (btnHeight + gap) * 2, btnWidth, btnHeight);
+
+            bool hostHover = Raylib.CheckCollisionPointRec(mousePos, hostRect);
+            bool joinHover = Raylib.CheckCollisionPointRec(mousePos, joinRect);
+            bool backHover = Raylib.CheckCollisionPointRec(mousePos, backRect);
+
+            string currentHover = hostHover ? "host" : (joinHover ? "join" : (backHover ? "back" : "none"));
+            if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
+            _lastHoveredId = currentHover;
+
+            DrawModernButton(hostRect, "Host Match", hostHover);
+            DrawModernButton(joinRect, "Join Match", joinHover);
+            DrawModernButton(backRect, "Back", backHover);
+
+            if (hostHover && isClick)
+            {
+                CurrentMenuView = MainMenuView.HostWaiting;
+                HostRoomCode = "Connecting...";
+                HostStatus = "Connecting to Relay...";
+                OnHostGameClicked?.Invoke();
+            }
+            if (joinHover && isClick)
+            {
+                CurrentMenuView = MainMenuView.JoinPrompt;
+                _joinCodeInput = string.Empty;
+                JoinStatus = string.Empty;
+            }
+            if (backHover && isClick) CurrentMenuView = MainMenuView.Main;
+        }
+
+        /// <summary>
+        /// Renders the host waiting screen with an animated radar indicator and 5-digit room code display.
+        /// </summary>
+        private void DrawHostWaitingMenu(float offsetX)
+        {
+            int screenW = 1600; int screenH = 900;
+            Raylib.DrawRectangle(0, 0, screenW, screenH, new Color(0, 0, 0, (int)Math.Clamp(220 * (1f - Math.Abs(offsetX)/1600f), 0, 255)));
+            Vector2 mousePos = Raylib.GetMousePosition();
+            bool isClick = Raylib.IsMouseButtonReleased(MouseButton.Left);
+
+            int titleW = Raylib.MeasureText("HOSTING ROOM", 60);
+            Raylib.DrawText("HOSTING ROOM", (int)offsetX + screenW / 2 - titleW / 2, 160, 60, Color.RayWhite);
+
+            // Large 5-Digit Room Code presentation banner
+            int boxW = 500; int boxH = 110;
+            int boxX = (screenW - boxW) / 2 + (int)offsetX;
+            int boxY = 250;
+            Rectangle codeBox = new Rectangle(boxX, boxY, boxW, boxH);
+            Raylib.DrawRectangleRounded(codeBox, 0.3f, 16, new Color(25, 30, 40, 240));
+            Raylib.DrawRectangleRoundedLines(codeBox, 0.3f, 16, Color.Gold);
+
+            string codeTitle = "ROOM CODE:";
+            int codeTitleW = Raylib.MeasureText(codeTitle, 22);
+            Raylib.DrawText(codeTitle, boxX + (boxW - codeTitleW) / 2, boxY + 14, 22, Color.LightGray);
+
+            int codeW = Raylib.MeasureText(HostRoomCode, 48);
+            Raylib.DrawText(HostRoomCode, boxX + (boxW - codeW) / 2, boxY + 45, 48, Color.Gold);
+
+            // Pulsing status text
+            float pulse = (float)Math.Sin(Raylib.GetTime() * 4.0) * 0.5f + 0.5f;
+            Color statusColor = new Color(200, 220, 255, (int)(150 + 105 * pulse));
+            int statusW = Raylib.MeasureText(HostStatus, 26);
+            Raylib.DrawText(HostStatus, (int)offsetX + screenW / 2 - statusW / 2, 400, 26, statusColor);
+
+            int btnWidth = 260; int btnHeight = 65;
+            int btnX = (screenW - btnWidth) / 2 + (int)offsetX;
+            int btnY = 500;
+            Rectangle cancelRect = new Rectangle(btnX, btnY, btnWidth, btnHeight);
+            bool cancelHover = Raylib.CheckCollisionPointRec(mousePos, cancelRect);
+
+            if (cancelHover && _lastHoveredId != "cancel") OnButtonHovered?.Invoke();
+            _lastHoveredId = cancelHover ? "cancel" : "none";
+
+            DrawModernButton(cancelRect, "Cancel", cancelHover);
+
+            if (cancelHover && isClick)
+            {
+                OnCancelLobbyClicked?.Invoke();
+                CurrentMenuView = MainMenuView.OnlineLobby;
+            }
+        }
+
+        /// <summary>
+        /// Renders the join room prompt capturing keyboard digits for room pairing.
+        /// </summary>
+        private void DrawJoinPromptMenu(float offsetX)
+        {
+            int screenW = 1600; int screenH = 900;
+            Raylib.DrawRectangle(0, 0, screenW, screenH, new Color(0, 0, 0, (int)Math.Clamp(220 * (1f - Math.Abs(offsetX)/1600f), 0, 255)));
+            Vector2 mousePos = Raylib.GetMousePosition();
+            bool isClick = Raylib.IsMouseButtonReleased(MouseButton.Left);
+
+            int titleW = Raylib.MeasureText("JOIN MATCH", 60);
+            Raylib.DrawText("JOIN MATCH", (int)offsetX + screenW / 2 - titleW / 2, 160, 60, Color.RayWhite);
+
+            string prompt = "Enter 5-digit room code:";
+            int promptW = Raylib.MeasureText(prompt, 26);
+            Raylib.DrawText(prompt, (int)offsetX + screenW / 2 - promptW / 2, 250, 26, Color.LightGray);
+
+            // Input handling: digits only, maximum 5 characters
+            int key = Raylib.GetCharPressed();
+            while (key > 0)
+            {
+                if (char.IsDigit((char)key) && _joinCodeInput.Length < 5)
+                {
+                    _joinCodeInput += (char)key;
+                }
+                key = Raylib.GetCharPressed();
+            }
+
+            if (Raylib.IsKeyPressed(KeyboardKey.Backspace) && _joinCodeInput.Length > 0)
+            {
+                _joinCodeInput = _joinCodeInput.Substring(0, _joinCodeInput.Length - 1);
+            }
+
+            // Interactive input box
+            int boxW = 340; int boxH = 80;
+            int boxX = (screenW - boxW) / 2 + (int)offsetX;
+            int boxY = 300;
+            Rectangle inputBox = new Rectangle(boxX, boxY, boxW, boxH);
+            Raylib.DrawRectangleRounded(inputBox, 0.3f, 16, new Color(30, 35, 45, 255));
+            Raylib.DrawRectangleRoundedLines(inputBox, 0.3f, 16, Color.Gold);
+
+            string displayText = string.IsNullOrEmpty(_joinCodeInput) ? "_____" : _joinCodeInput;
+            Color textColor = string.IsNullOrEmpty(_joinCodeInput) ? Color.DarkGray : Color.Gold;
+            int textW = Raylib.MeasureText(displayText, 46);
+            Raylib.DrawText(displayText, boxX + (boxW - textW) / 2, boxY + (boxH - 46) / 2, 46, textColor);
+
+            // Status or error message
+            if (!string.IsNullOrEmpty(JoinStatus))
+            {
+                int statW = Raylib.MeasureText(JoinStatus, 22);
+                Raylib.DrawText(JoinStatus, (int)offsetX + screenW / 2 - statW / 2, 410, 22, Color.Red);
+            }
+
+            // Connect & Back buttons
+            int btnW = 220; int btnH = 65; int gap = 20;
+            int btnStartX = (screenW - (btnW * 2 + gap)) / 2 + (int)offsetX;
+            int btnY = 470;
+
+            Rectangle connectRect = new Rectangle(btnStartX, btnY, btnW, btnH);
+            Rectangle backRect = new Rectangle(btnStartX + btnW + gap, btnY, btnW, btnH);
+
+            bool connectHover = Raylib.CheckCollisionPointRec(mousePos, connectRect);
+            bool backHover = Raylib.CheckCollisionPointRec(mousePos, backRect);
+
+            string currentHover = connectHover ? "connect" : (backHover ? "back" : "none");
+            if (currentHover != "none" && currentHover != _lastHoveredId) OnButtonHovered?.Invoke();
+            _lastHoveredId = currentHover;
+
+            DrawModernButton(connectRect, "Connect", connectHover);
+            DrawModernButton(backRect, "Back", backHover);
+
+            if ((connectHover && isClick) || (Raylib.IsKeyPressed(KeyboardKey.Enter) && _joinCodeInput.Length == 5))
+            {
+                if (_joinCodeInput.Length == 5)
+                {
+                    JoinStatus = "Connecting...";
+                    OnJoinGameClicked?.Invoke(_joinCodeInput);
+                }
+                else
+                {
+                    JoinStatus = "Code must be 5 digits.";
+                }
+            }
+
+            if (backHover && isClick)
+            {
+                CurrentMenuView = MainMenuView.OnlineLobby;
+            }
+        }
+        
 		private void DrawPauseMenu(float offsetX)
         {
             int screenW = 1600; int screenH = 900;

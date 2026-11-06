@@ -1,4 +1,5 @@
-﻿using BilliardsGame.Interfaces.Enums;
+﻿using BilliardsGame.Interfaces;
+using BilliardsGame.Interfaces.Enums;
 using BilliardsGame.Interfaces.Models;
 using System;
 using System.Numerics;
@@ -6,6 +7,10 @@ using System.Linq;
 using BilliardsGame.App;
 using BilliardsGame.Core;
 using BilliardsGame.Physics;
+using BilliardsGame.Network.Abstractions;
+using BilliardsGame.Network.Services;
+using BilliardsGame.Network.Input;
+using BilliardsGame.Network.Protocol;
 using Raylib_cs;
 
 namespace BilliardsGame.App
@@ -168,12 +173,25 @@ namespace BilliardsGame.App
             setupBalls();
 
             // Dependency Injection sequence explicitly registering subsystems onto the Domain supervisor.
-            var inputProvider = new RaylibInputProvider();
+            var rawInputProvider = new RaylibInputProvider();
+            var networkService = new NetworkService();
             var cueController = new CueController();
             
-            cueController.OnCueHit += audioManager.PlayCueHit;
-            var gameManager = new GameManager(physicsEngine, cueController, inputProvider);
+            // Relay endpoint resolution from environment variables or defaults.
+            string relayHost = Environment.GetEnvironmentVariable("RELAY_HOST") ?? "127.0.0.1";
+            int relayPort = int.TryParse(Environment.GetEnvironmentVariable("RELAY_PORT"), out int p) ? p : 7777;
+
+            // Forward declaration to resolve active player ID provider for input multiplexing.
+            GameManager? gameManager = null;
+            var networkInputProvider = new NetworkInputProvider(
+                rawInputProvider,
+                networkService,
+                () => gameManager?.ActivePlayer?.Id ?? 1);
+
+            gameManager = new GameManager(physicsEngine, cueController, networkInputProvider);
             
+            cueController.OnCueHit += audioManager.PlayCueHit;
+
             // Map subjective logical states directly to Audio feedback.
             gameManager.OnNotificationEvent += (type) => 
             {
@@ -187,9 +205,19 @@ namespace BilliardsGame.App
                 var whiteBall = new Ball(0, pos, 0.15f, 10f, 0.8f, BallType.Cue, 0);
                 physicsEngine.AddBody(whiteBall);
                 audioManager.PlaySFX("collision", 0.7f);
+
+                if (networkService.IsConnected && networkInputProvider.IsMyTurn)
+                {
+                    networkService.SendPacket(NetworkPacketType.BallInHand, new BallInHandPacket(pos.X, pos.Y, true));
+                }
             };
 
-            gameManager.OnGameOver += () => { audioManager.StopBGM("gameplay"); audioManager.PlayGameOver(); audioManager.PlayBGM("menu", 0.6f); };
+            gameManager.OnGameOver += () => 
+            { 
+                audioManager.StopBGM("gameplay"); 
+                audioManager.PlayGameOver(); 
+                audioManager.PlayBGM("menu", 0.6f); 
+            };
             
             // Presentational View linking exposing purely UI dependencies and masking physical constraints.
             var sceneData = new SceneParameters(gameManager, physicsEngine, cueController);
@@ -199,47 +227,140 @@ namespace BilliardsGame.App
             renderer.OnButtonHovered = () => audioManager.PlayUIHover();
             
             // Link input system to dynamic UI camera space mappings resolving click vectors accurately regardless of resolution.
-            inputProvider.SetCoordinateMapper((screenPos) => Raylib.GetScreenToWorld2D(screenPos, renderer.MainCamera));
+            networkInputProvider.SetCoordinateMapper((screenPos) => Raylib.GetScreenToWorld2D(screenPos, renderer.MainCamera));
 
             bool isPaused = false;
             bool shouldExit = false;
 
+            // Helper resetting game state into local or online gameplay session.
+            Action startGameSession = () =>
+            {
+                audioManager.PlayUIClick(); 
+                audioManager.StopBGM("menu"); 
+                audioManager.PlayBGM("gameplay", 0.4f);
+                rawInputProvider.ConsumeClickForUI();
+                setupBalls();
+                gameManager.StartGame();
+                renderer.CurrentMenuView = MainMenuView.Main;
+            };
+
             // Wire UI Delegates executing domain changes bypassing tightly coupled loop architectures.
             renderer.OnPlayClicked = () => 
             { 
-                audioManager.PlayUIClick(); audioManager.StopBGM("menu"); audioManager.PlayBGM("gameplay", 0.4f);
-                inputProvider.ConsumeClickForUI();
-                gameManager.StartGame();
+                startGameSession();
             };
+
+            renderer.OnTrainingClicked = () => 
+            { 
+                if (networkService.IsConnected) networkService.Disconnect("Switched to Training");
+                startGameSession();
+            };
+
+            renderer.OnHostGameClicked = () =>
+            {
+                audioManager.PlayUIClick();
+                renderer.HostStatus = $"Connecting to {relayHost}:{relayPort}...";
+                _ = networkService.HostViaRelayAsync(relayHost, relayPort);
+            };
+
+            renderer.OnJoinGameClicked = (code) =>
+            {
+                audioManager.PlayUIClick();
+                renderer.JoinStatus = $"Connecting to room {code}...";
+                _ = networkService.JoinViaRelayAsync(relayHost, relayPort, code);
+            };
+
+            renderer.OnCancelLobbyClicked = () =>
+            {
+                audioManager.PlayUIClick();
+                networkService.Disconnect("Host cancelled waiting");
+                renderer.HostRoomCode = string.Empty;
+                renderer.CurrentMenuView = MainMenuView.OnlineLobby;
+            };
+
             renderer.OnExitClicked = () => 
             { 
                 audioManager.PlayUIClick();
+                networkService.Disconnect("Client exited");
                 shouldExit = true;
             };
+
             renderer.OnContinueClicked = () => 
             { 
-                audioManager.PlayUIClick(); audioManager.StopBGM("menu"); audioManager.PlayBGM("gameplay");
-                inputProvider.ConsumeClickForUI();
+                audioManager.PlayUIClick(); 
+                audioManager.StopBGM("menu"); 
+                audioManager.PlayBGM("gameplay");
+                rawInputProvider.ConsumeClickForUI();
                 isPaused = false;
             };
+
             renderer.OnRestartClicked = () => 
             { 
-                audioManager.PlayUIClick(); audioManager.StopBGM("menu"); audioManager.PlayBGM("gameplay", 0.4f);
-                inputProvider.ConsumeClickForUI();
+                audioManager.PlayUIClick(); 
+                audioManager.StopBGM("menu"); 
+                audioManager.PlayBGM("gameplay", 0.4f);
+                rawInputProvider.ConsumeClickForUI();
                 isPaused = false;
                 setupBalls();
                 gameManager.StartGame();
             };
 
+            // Wire Network Service Callbacks into Renderer and Game lifecycle.
+            networkService.OnRoomCreated += (roomCode) =>
+            {
+                renderer.HostRoomCode = roomCode;
+                renderer.HostStatus = "Room created! Share code with Player 2.";
+            };
+
+            networkService.OnConnected += (assignedPlayerId) =>
+            {
+                audioManager.PlaySFX("announcement", 0.6f);
+                startGameSession();
+                gameManager.SetNotification($"Online match connected! You are Player {assignedPlayerId}", NotificationType.Info, 4.0f);
+            };
+
+            networkService.OnConnectionFailed += (reason) =>
+            {
+                renderer.JoinStatus = $"Failed: {reason}";
+                renderer.HostStatus = $"Failed: {reason}";
+                audioManager.PlaySFX("foul", 0.3f);
+            };
+
+            networkService.OnDisconnected += (reason) =>
+            {
+                gameManager.SetNotification($"Opponent disconnected ({reason})", NotificationType.Foul, 5.0f);
+                audioManager.PlaySFX("foul", 0.4f);
+            };
+
+            // Client physics synchronization: override local ball bodies with authoritative host snapshots.
+            networkService.OnPhysicsSyncReceived += (syncPacket) =>
+            {
+                if (!networkService.IsHost && syncPacket?.Balls != null)
+                {
+                    var bodies = physicsEngine.GetBodies().OfType<ICircleBody>().ToDictionary(b => b.Id);
+                    foreach (var snapshot in syncPacket.Balls)
+                    {
+                        if (bodies.TryGetValue(snapshot.Id, out var body))
+                        {
+                            body.Position = new Vector2(snapshot.X, snapshot.Y);
+                            body.Velocity = new Vector2(snapshot.Vx, snapshot.Vy);
+                        }
+                    }
+                }
+            };
+
             // Main Execution Frame Configuration mappings:
-            // High-fidelity rendering allowed completely decoupled against a locked rigid 480hz physics evaluation system.
             float accumulator = 0f;
             const float dt = 1f / 480f;
+            float physicsSyncTimer = 0f;
+            const float physicsSyncInterval = 1f / 60f; // 60Hz physics stream
 
             // Application Spinlock Sequence
             while (!Raylib.WindowShouldClose() && !shouldExit)
             {
-                inputProvider.Update();
+                rawInputProvider.Update();
+                networkService.Update();
+
                 if (gameManager.CurrentState != GameState.Menu && 
                     gameManager.CurrentState != GameState.GameOver)
                 {
@@ -263,6 +384,9 @@ namespace BilliardsGame.App
 
                 if (!isPaused)
                 {
+                    // Update network input proxy to stream telemetry or consume remote aim.
+                    networkInputProvider.Update(frameTime, cueController.CueDirection, cueController.Power, (cueController.Power > 0f));
+
                     accumulator += frameTime;
                     
                     // Trigger abstract domain processes resolving turn rules based solely on delta scales.
@@ -274,6 +398,22 @@ namespace BilliardsGame.App
                         physicsEngine.Step(dt);
                         accumulator -= dt;
                     }
+
+                    // Authoritative Host: stream continuous physics state during SimulatingBalls.
+                    if (networkService.IsConnected && networkService.IsHost && gameManager.CurrentState == GameState.SimulatingBalls)
+                    {
+                        physicsSyncTimer += frameTime;
+                        if (physicsSyncTimer >= physicsSyncInterval)
+                        {
+                            physicsSyncTimer = 0f;
+                            var snapshots = physicsEngine.GetBodies()
+                                .OfType<ICircleBody>()
+                                .Select(b => new BallSnapshot(b.Id, b.Position.X, b.Position.Y, b.Velocity.X, b.Velocity.Y))
+                                .ToList();
+                            var syncPacket = new PhysicsSyncPacket(snapshots, physicsEngine.AreAllBodiesAtRest());
+                            networkService.SendPacket(NetworkPacketType.PhysicsSync, syncPacket);
+                        }
+                    }
                 }
 
                 audioManager.Update();
@@ -284,6 +424,7 @@ namespace BilliardsGame.App
             }
 
             // Cleanup cycle unbinding C-pointers safely matching the OS shutdown sequences.
+            networkService.Dispose();
             audioManager.Deinitialize();
             Raylib.CloseWindow();
         }

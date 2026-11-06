@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using Moq;
 using Xunit;
 using BilliardsGame.Core;
@@ -13,6 +14,9 @@ namespace BilliardsGame.Core.Tests
     /// </summary>
     public class GameManagerTests
     {
+        /// <summary>
+        /// Validates that sinking the cue ball triggers a scratch foul event and enters BallInHand state.
+        /// </summary>
         [Fact]
         public void UpdateLogic_SimulatingBalls_NoCueBall_BallInHandFoul()
         {
@@ -66,6 +70,9 @@ namespace BilliardsGame.Core.Tests
             Assert.Equal(GameState.BallInHand, gameManager.CurrentState);
         }
 
+        /// <summary>
+        /// Validates that legally or illegally sinking the black ball concludes the match with Game Over state.
+        /// </summary>
         [Fact]
         public void UpdateLogic_SimulatingBalls_NoBlackBall_GameOver()
         {
@@ -107,6 +114,188 @@ namespace BilliardsGame.Core.Tests
             // Actuates closing logic boundaries resolving empty arrays successfully transitioning onto final overlays accurately validating missing elements cleanly avoiding crashes.
             gameManager.UpdateLogic(0.016f); 
             Assert.Equal(GameState.GameOver, gameManager.CurrentState);
+        }
+
+        /// <summary>
+        /// Validates that turn timer continuously decrements in proportion to delta time while the active player is in standard aiming state.
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_DecrementsRemainingTurnTime_InPlayerTurn()
+        {
+            // Prepare isolated domain environment with mock peripherals.
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var cueBallMock = new Mock<ICircleBody>();
+            cueBallMock.SetupGet(b => b.Id).Returns(0);
+            physicsMock.Setup(p => p.GetBodies()).Returns(new List<IPhysicsBody> { cueBallMock.Object });
+
+            var gameManager = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gameManager.StartGame();
+
+            // Assert baseline beginning timer state.
+            Assert.Equal(GameState.PlayerTurn, gameManager.CurrentState);
+            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+
+            // Step domain frame by 5.5 seconds.
+            gameManager.UpdateLogic(5.5f);
+
+            // Assert timer reduced accurately by delta elapsed.
+            Assert.Equal(24.5f, gameManager.RemainingTurnTime, 3);
+        }
+
+        /// <summary>
+        /// Validates that turn timer continues decrementing while holding the shot charge, penalizing indecision.
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_DecrementsRemainingTurnTime_InChargingShot()
+        {
+            // Assemble mock dependencies.
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var cueBallMock = new Mock<ICircleBody>();
+            cueBallMock.SetupGet(b => b.Id).Returns(0);
+            physicsMock.Setup(p => p.GetBodies()).Returns(new List<IPhysicsBody> { cueBallMock.Object });
+
+            var gameManager = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gameManager.StartGame();
+
+            // Transition explicitly to ChargingShot state via left mouse press.
+            inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(true);
+            gameManager.UpdateLogic(2.0f);
+            Assert.Equal(GameState.ChargingShot, gameManager.CurrentState);
+            Assert.Equal(28.0f, gameManager.RemainingTurnTime, 3);
+
+            // Maintain sustained mouse button depression simulating prolonged charge hold.
+            inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(false);
+            inputMock.SetupGet(i => i.IsLeftMouseDown).Returns(true);
+            gameManager.UpdateLogic(3.0f);
+
+            Assert.Equal(GameState.ChargingShot, gameManager.CurrentState);
+            Assert.Equal(25.0f, gameManager.RemainingTurnTime, 3);
+        }
+
+        /// <summary>
+        /// Validates that inactive states such as Menu freeze the turn countdown timer completely.
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_DoesNotDecrementRemainingTurnTime_InMenu()
+        {
+            // Instantiate pristine manager without starting game match.
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gameManager = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            Assert.Equal(GameState.Menu, gameManager.CurrentState);
+
+            // Propagate time delta while in root menu.
+            gameManager.UpdateLogic(5.0f);
+
+            // Timer should remain frozen at maximum allocation.
+            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+        }
+
+        /// <summary>
+        /// Asserts that a legal turnover safely refreshes the countdown window back to 30 seconds for the opposing player.
+        /// </summary>
+        [Fact]
+        public void EndTurn_ResetsRemainingTurnTime()
+        {
+            // Setup domain supervisor.
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var gameManager = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gameManager.StartGame();
+            gameManager.UpdateLogic(12.0f);
+
+            // Validate that Player 1 consumed part of their allocated turn time.
+            Assert.Equal(18.0f, gameManager.RemainingTurnTime, 3);
+            Assert.Equal(1, gameManager.ActivePlayer.Id);
+
+            // Conclude turn legally.
+            gameManager.EndTurn();
+
+            // Countdown must be restored to default 30s and active player toggled to Player 2.
+            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+            Assert.Equal(2, gameManager.ActivePlayer.Id);
+        }
+
+        /// <summary>
+        /// Verifies that running out of turn time triggers an authoritative timeout foul, removes the cue ball,
+        /// awards ball-in-hand to the opponent, and reinitializes the timer.
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_TurnTimerExpires_TriggersFoulAndSwitchesToOpponentBallInHand()
+        {
+            // Build mock simulation structure holding an active cue ball.
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            var cueBallMock = new Mock<ICircleBody>();
+            cueBallMock.SetupGet(b => b.Id).Returns(0);
+            physicsMock.Setup(p => p.GetBodies()).Returns(new List<IPhysicsBody> { cueBallMock.Object });
+
+            var gameManager = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gameManager.StartGame();
+
+            bool scratchFoulFired = false;
+            NotificationType? notificationTypeFired = null;
+
+            gameManager.OnScratchFoul += () => scratchFoulFired = true;
+            gameManager.OnNotificationEvent += (type) => notificationTypeFired = type;
+
+            // Advance logical timeline past the full 30.0-second threshold.
+            gameManager.UpdateLogic(30.0f);
+
+            // Assert foul events and semantic banner broadcasting.
+            Assert.True(scratchFoulFired, "OnScratchFoul should have been invoked on timeout.");
+            Assert.Equal(NotificationType.Foul, notificationTypeFired);
+            Assert.Equal("FOUL: Time Out", gameManager.NotificationMessage);
+            Assert.Equal(NotificationType.Foul, gameManager.NotificationType);
+            Assert.Equal(GameState.BallInHand, gameManager.CurrentState);
+            Assert.Equal(2, gameManager.ActivePlayer.Id);
+            Assert.Equal(30.0f, gameManager.RemainingTurnTime);
+
+            // Assert that cue ball removal was requested to enforce ball-in-hand placement.
+            physicsMock.Verify(p => p.RemoveBody(cueBallMock.Object), Times.Once);
+            cueMock.Verify(c => c.ResetCharge(), Times.Once);
+        }
+
+        /// <summary>
+        /// Verifies that when a timeout foul strikes while the player is charging shot and overheated,
+        /// the cue controller charge and overheat states are unconditionally cleaned up.
+        /// </summary>
+        [Fact]
+        public void UpdateLogic_TurnTimerExpires_WhileChargingAndOverheated_ResetsCueCharge()
+        {
+            // Configure mock dependencies.
+            var physicsMock = new Mock<IPhysicsEngine>();
+            var cueMock = new Mock<ICueController>();
+            var inputMock = new Mock<IInputProvider>();
+
+            cueMock.SetupGet(c => c.IsOverheated).Returns(true);
+
+            var gameManager = new GameManager(physicsMock.Object, cueMock.Object, inputMock.Object);
+            gameManager.StartGame();
+
+            // Enter charging state.
+            inputMock.SetupGet(i => i.WasLeftMousePressed).Returns(true);
+            gameManager.UpdateLogic(1.0f);
+
+            // Expire remaining time while overheated.
+            gameManager.UpdateLogic(29.0f);
+
+            // Verify state transition and reset of cue charge.
+            Assert.Equal(GameState.BallInHand, gameManager.CurrentState);
+            Assert.Equal(2, gameManager.ActivePlayer.Id);
+            cueMock.Verify(c => c.ResetCharge(), Times.Once);
         }
     }
 }

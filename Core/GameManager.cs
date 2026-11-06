@@ -29,6 +29,9 @@ namespace BilliardsGame.Core
         
         /// <inheritdoc />
         public IPlayer Player2 => _player2;
+
+        /// <inheritdoc />
+        public float RemainingTurnTime { get; private set; } = 30.0f;
         
         /// <inheritdoc />
         public string NotificationMessage { get; private set; } = "";
@@ -89,6 +92,7 @@ namespace BilliardsGame.Core
 
             CurrentState = GameState.Menu;
             ActivePlayer = _player1;
+            RemainingTurnTime = 30.0f;
         }
 
         /// <summary>
@@ -117,6 +121,7 @@ namespace BilliardsGame.Core
             NotificationMessage = "";
             NotificationTimer = 0f;
             TargetPocket = null;
+            RemainingTurnTime = 30.0f;
             
             ActivePlayer = _player1;
             SetTurnState();
@@ -128,6 +133,7 @@ namespace BilliardsGame.Core
             // Switch pointer targets forcing sequential player operations resolving legal turnovers.
             TargetPocket = null;
             ActivePlayer = ActivePlayer == _player1 ? _player2 : _player1;
+            RemainingTurnTime = 30.0f;
             SetTurnState();
         }
 
@@ -137,6 +143,7 @@ namespace BilliardsGame.Core
         /// </summary>
         private void SetTurnState()
         {
+            RemainingTurnTime = 30.0f;
             if (ActivePlayer.Score == 7)
             {
                 TargetPocket = null;
@@ -196,7 +203,50 @@ namespace BilliardsGame.Core
             {
                 TargetPocket = pocket;
                 CurrentState = GameState.PlayerTurn;
+                RemainingTurnTime = 30.0f;
             }
+        }
+
+        /// <inheritdoc />
+        public void PlaceCueBall(Vector2 position)
+        {
+            if (CurrentState == GameState.BallInHand && IsValidCueBallPlacement(position))
+            {
+                OnPlaceCueBall?.Invoke(position);
+                RemainingTurnTime = 30.0f;
+                SetTurnState();
+            }
+        }
+
+        /// <summary>
+        /// Executes authoritative timeout penalty resolution when the active turn countdown reaches zero during an aiming or decision phase.
+        /// Broadcasts semantic foul notifications, aborts accumulated kinetic potentials on the cue, strips the table of the active cue ball,
+        /// toggles turn authority to the opposing participant, and instantiates an explicit ball-in-hand recovery phase with a fresh 30-second window.
+        /// </summary>
+        private void HandleTimeout()
+        {
+            // Emit high-priority semantic foul notification triggering audio-visual alerts across boundaries.
+            SetNotification("FOUL: Time Out", NotificationType.Foul, 3.5f);
+            
+            // Abort accumulated kinetic impulse potentials and clear any active overheat lockout flags on the cue stick.
+            _cueController.ResetCharge();
+
+            // Notify downstream listeners to prepare cue ball respawn lifecycles.
+            OnScratchFoul?.Invoke();
+
+            // Authoritatively eradicate cue ball (Id 0) from the physical world simulating scratch removal.
+            var currentBodies = _physicsEngine.GetBodies();
+            var existingCueBall = currentBodies?.FirstOrDefault(b => b.Id == 0);
+            if (existingCueBall != null)
+            {
+                _physicsEngine.RemoveBody(existingCueBall);
+            }
+
+            // Invalidate previously declared 8-ball pockets and hand over table authority.
+            TargetPocket = null;
+            ActivePlayer = ActivePlayer == _player1 ? _player2 : _player1;
+            CurrentState = GameState.BallInHand;
+            RemainingTurnTime = 30.0f;
         }
 
         /// <inheritdoc />
@@ -207,6 +257,18 @@ namespace BilliardsGame.Core
             {
                 NotificationTimer -= deltaTime;
                 if (NotificationTimer <= 0f) NotificationMessage = "";
+            }
+
+            // Turn Countdown Timer: active strictly in decision/aiming states
+            if (CurrentState == GameState.PlayerTurn || CurrentState == GameState.ChargingShot || CurrentState == GameState.BallInHand)
+            {
+                RemainingTurnTime -= deltaTime;
+                if (RemainingTurnTime <= 0f)
+                {
+                    RemainingTurnTime = 0f;
+                    HandleTimeout();
+                    return;
+                }
             }
 
             // Core State Machine matching explicitly determined active game lifecycle sequential phases
@@ -242,8 +304,7 @@ namespace BilliardsGame.Core
                         var mousePos = _inputProvider.MouseWorldPosition;
                         if (IsValidCueBallPlacement(mousePos))
                         {
-                            OnPlaceCueBall?.Invoke(mousePos);
-                            SetTurnState();
+                            PlaceCueBall(mousePos);
                         }
                     }
                     break;
@@ -416,6 +477,7 @@ namespace BilliardsGame.Core
                                 TargetPocket = null;
                                 ActivePlayer = ActivePlayer == _player1 ? _player2 : _player1;
                                 CurrentState = GameState.BallInHand;
+                                RemainingTurnTime = 30.0f;
                                 break;
                             case RuleResult.Continue:
                                 SetTurnState();

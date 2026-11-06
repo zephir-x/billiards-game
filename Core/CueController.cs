@@ -81,10 +81,11 @@ namespace BilliardsGame.Core
         /// <inheritdoc />
         public void ResetCharge()
         {
-            if (!IsOverheated)
-            {
-                Power = 0.0f;
-            }
+            // Nullify stored kinetic potential completely, neutralizing any buffered strike impulse.
+            Power = 0.0f;
+
+            // Unconditionally revoke thermal penalty lockouts restoring immediate aiming and charge readiness.
+            IsOverheated = false;
         }
 
         /// <inheritdoc />

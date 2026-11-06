@@ -6,6 +6,7 @@ namespace BilliardsGame.Interfaces
 {
     /// <summary>
     /// Operates as a completely safe read-only payload wrapper mapping domain complexities into pure visual presentation references.
+    /// Exposes state snapshots to decoupled rendering pipelines without permitting state modification.
     /// </summary>
     public interface ISceneParameters
     {
@@ -45,6 +46,11 @@ namespace BilliardsGame.Interfaces
         ICueController? CueInfo { get; }
 
         /// <summary>
+        /// Remaining seconds allocated for the active participant's turn to be formatted onto the HUD circular gauge.
+        /// </summary>
+        float TurnTimer { get; }
+
+        /// <summary>
         /// Immutable reference to the primary local player instance.
         /// </summary>
         IPlayer Player1 { get; }
@@ -53,32 +59,32 @@ namespace BilliardsGame.Interfaces
         /// Immutable reference to the primary local opposing player instance.
         /// </summary>
         IPlayer Player2 { get; }
-        
+
         /// <summary>
-        /// High-level text payload of the active notification banner designed for immediate renderer injection.
+        /// Textual payload of the current active broadcast notification.
         /// </summary>
         string NotificationMessage { get; }
 
         /// <summary>
-        /// Active duration calculation value for animating transparency transitions on banners.
+        /// Active duration remaining in seconds for the display banner.
         /// </summary>
         float NotificationTimer { get; }
 
         /// <summary>
-        /// Semantic intent of the UI banner used directly to allocate appropriate dynamic Hex shades.
+        /// Semantic category determining coloration and animation patterns of active UI notifications.
         /// </summary>
         NotificationType NotificationType { get; }
-        
+
         /// <summary>
-        /// Target pocket implicitly highlighted under CallingPocket game states representing valid win routes.
+        /// Currently designated pocket for the game-winning 8-Ball shot, if applicable.
         /// </summary>
         IPocket? TargetPocket { get; }
 
         /// <summary>
-        /// Facilitates queries calculating whether the ghosted white ball cursor overlaps impossible dimensions (cushions or balls).
+        /// Checks if a candidate position is free of overlap for cue ball repositioning during ball-in-hand.
         /// </summary>
-        /// <param name="position">Checked world-space coordinates.</param>
-        /// <returns>True against completely valid surfaces, false if intersecting geometries.</returns>
+        /// <param name="position">Candidate 2D world coordinates.</param>
+        /// <returns>True if placement is legally valid; otherwise false.</returns>
         bool IsValidCueBallPlacement(Vector2 position);
     }
 }
