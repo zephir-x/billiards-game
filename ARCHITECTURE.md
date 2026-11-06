@@ -10,15 +10,17 @@ The project is a 2D billiards simulation built in .NET, focusing on precise phys
 
 ## Game Mechanics & Context
 - **Turn-based Gameplay:** Player 1 and Player 2 alternate turns. The UI explicitly communicates the active player's turn.
-- **Local Hotseat:** The game is played on a single physical device (players share the mouse). There is no multiplayer/networking logic in this iteration.
-- **Main Menu:** Ascetic design containing only two options: `Play` and `Exit`.
+- **Local Hotseat & Training:** The game can be played locally on a single machine as a training/hotseat mode, or over a network in 1v1 multiplayer.
+- **Main Menu Navigation:** Features `Play Online` (Multiplayer lobby & room code), `Training` (local hotseat play), and `Exit`.
 - **Aiming (Cue Control):** The cue is kinematically linked to the cursor. The cue tip maintains a fixed distance from the cue ball's center, while the cue butt tracks the mouse cursor's directional vector.
 - **Shot Mechanics (Overheat System):** The player holds the Left Mouse Button (LMB) to charge shot power, which is visualized by a dedicated Power Bar located outside the billiard table. Releasing the button before reaching the maximum executes the shot. However, if the power reaches the critical maximum (1.0), the cue becomes **Overheated/Blocked**, and a shot can no longer be executed. The power bar will then slowly drain back to 0.0. Only when it completely resets to zero does the cue become available for aiming and shooting again.
+- **Turn Timer:** An active 30-second countdown for the current aiming turn. If the countdown reaches zero before shot release, an automatic foul penalty is levied (`FOUL: Time Out`) and turn control transfers.
 
 ## Tech Stack
 - **Language:** C# (.NET 9)
 - **Framework (hidden behind facades):** Raylib-cs for hardware bindings, rendering, and input tracking.
-- **Testing:** xUnit and Moq for deterministic physics and game state verification without graphical context.
+- **Testing:** xUnit and Moq for deterministic physics and game state verification without graphical context (100% Core & Physics domain coverage).
+- **Networking:** Zero-dependency .NET standard sockets (`System.Net.Sockets`) with non-blocking async TCP message frames (Authoritative Host model).
 
 ---
 
@@ -105,11 +107,48 @@ The project is a 2D billiards simulation built in .NET, focusing on precise phys
   - [x] **Match Point Validation & Ball In Hand Rendering:** Validated Ball placement mapping red cursor indicators on overlaps. At 7 pockets filled, golden UI triggers activating visually distinct text warnings.
   - [x] **Foul Wobble Tooltips:** Replaced aggressive end screens with "MATCH COMPLETE". Rendered soft wobbling "FOUL" contextual hints natively bounded between UI power bar and table geometry.
 
-- **Phase 12: Audio-Visual Overhaul & Release Delivery [In Progress]**
-  - [x] **Menu Sliding Capabilities:** Revamp the strict UI block transitions to utilize viewport easing matrices (sliding menus left/right into play space smoothly). Bounded delta time (max 0.033s) to prevent erratic slides. Overhauled button styles and background dimming gradients.
-  - [x] **Audio Implementation:** Utilize Raylib-cs audio device module. Added OnNotificationEvent hooked explicitly for rendering feedback SFX (fouls, assignments). Eased volume scales preventing audio peaking.
+- **Phase 12: Audio-Visual Overhaul & Release Delivery [Completed]**
+  - [x] **Menu Sliding Capabilities:** Revamp the strict UI block transitions to utilize viewport easing matrices (sliding menus left/right into play space smoothly). Bounded delta time (max 0.033s) to prevent erratic slides. Overhauled button styles and background dimming gradients.\n  - [x] **Audio Implementation:** Utilize Raylib-cs audio device module. Added OnNotificationEvent hooked explicitly for rendering feedback SFX (fouls, assignments). Eased volume scales preventing audio peaking.
   - [x] **Codebase Standardization:** Implement broad Roslyn fixes unifying XML <summary> formatting, dropping stale Polish comments explicitly favoring robust structural C# documentation per interface. Format spaces and generic layouts globally.
-  - [x] **Repository & Release Distribution:** Formalize a README.md containing topics, installation parameters, architecture mapping. Structure a dotnet publish -c Release -r win-x64 --self-contained workflow delivering a bundled .exe zip archive with custom .ico binaries.
+  - [x] **Repository & Release Distribution:** Formalize a README.md containing topics, installation parameters, architecture mapping. Structure a dotnet publish -c Release -r win-x64 --self-contained workflow delivering a bundled .exe zip archive with procedural in-memory icon rendering.
+
+- **Phase 13: Turn Timer & Online Multiplayer Integration [Completed]**
+  - [x] **A. Global Turn Countdown Timer & Expanded Foul Subsystem:**
+    - Introduce `TurnTimer` (configurable, default 30.0s) inside `IGameManager` active strictly during aiming states (`PlayerTurn`, `ChargingShot`, `BallInHand`).
+    - Reset timer to 30.0s upon every valid turn handoff.
+    - Decoupled tick propagation in `UpdateLogic(float deltaTime)` with state broadcast to `ISceneParameters`.
+    - **Timeout Penalty System:** If `RemainingTurnTime <= 0f`:
+      - Broadcast semantic notification: `SetNotification("FOUL: Time Out", NotificationType.Foul, 3.5f);`
+      - Trigger audio feedback via `OnNotificationEvent?.Invoke(NotificationType.Foul)`.
+      - Invoke `OnScratchFoul?.Invoke()` to grant the opponent `GameState.BallInHand`.
+      - Transfer turn execution cleanly to the opposing player.
+    - **UI & Presentation:** Circular or linear HUD gauge in `RaylibRenderer` displaying remaining seconds with urgency color shifts (Normal gold -> pulsing red at `<5s`) accompanied by warning tick audio pulses.
+    - **100% Test Coverage Requirement:**
+      - Unit tests in `BilliardsGame.Core.Tests/GameManagerTests.cs` validating:
+        1. Timer decrements accurately with `deltaTime`.
+        2. Timer resets to 30s when turn switches.
+        3. Exceeding 30s triggers `FOUL: Time Out` notification, fires `OnScratchFoul`, switches player, and sets `GameState.BallInHand`.
+        4. Overheat state during timeout correctly resets cue charge.
+  - [x] **B. Menu Flow & Mode Narrative Overhaul:**
+    - Shift previous local match flow to a dedicated **`Training`** button (Local Hotseat / Solo practice).
+    - Introduce primary **`Play Online`** option leading to a sleek lobby overlay:
+      - **Host Session:** Starts a local listening socket, generates/displays a 5-digit room code or IP address, and waits for a remote peer.
+      - **Join Session:** Displays an input modal to enter the peer IP/Code and establishes connection.
+  - [x] **C. Dedicated Network Module (`BilliardsGame.Network`):**
+    - Zero-dependency, lightweight .NET sockets implementation (`TcpListener` / `TcpClient` or non-blocking async network streams).
+    - Compact binary/JSON packet protocol:
+      - `HandshakeMsg`: Player identity and role assignment (Host = Player 1, Client = Player 2).
+      - `AimSyncMsg`: Real-time streaming of cue rotation angle and charge percentage from the active player.
+      - `ShotExecutionMsg`: Precise shot impulse vector applied at the exact frame.
+      - `PhysicsSyncMsg`: Authoritative snapshot streaming (30-60Hz) of active ball positions `(Id, X, Y, Vx, Vy)` emitted by Host during `SimulatingBalls`.
+      - `BallInHandMsg`: Cursor position updates during white ball placement.
+      - `TurnStateMsg`: Turn transitions, fouls (including Timeouts), and game over synchronization.
+  - [x] **D. Authoritative Host Architecture Integration:**
+    - The **Host** maintains absolute authority over `PhysicsEngine` and `RuleValidator`.
+    - The **Client** acts as an interpolated proxy: overrides its local physics during simulation by lerping to received authoritative ball snapshots, preventing floating-point desynchronization.
+    - Implement a `NetworkInputProvider` conforming to `IInputProvider`: when it is the remote opponent's turn, local mouse input is bypassed and replaced with inbound `AimSyncMsg` coordinates.
+  - [x] **E. Reconnection & Disconnect Fault Handling:**
+    - Graceful connection drop detection: if a peer disconnects, prompt an informational UI overlay ("Opponent disconnected") with options to forfeit or return to the main menu without thread crash or application freeze.
 
 ---
 
@@ -206,6 +245,7 @@ public interface IGameManager
 {
     GameState CurrentState { get; }
     IPlayer ActivePlayer { get; }
+    float RemainingTurnTime { get; } // Phase 13 Timer contract
     void UpdateLogic(float deltaTime); // Propagates logic updates
     void StartGame();
     void EndTurn();
@@ -235,9 +275,9 @@ public interface ICueController
 // Abstracts physical input devices from graphics libraries
 public interface IInputProvider
 {
-    Vector2 MouseWorldPosition { get; }
-    bool IsLeftMouseDown { get; }
-    bool WasLeftMouseReleased { get; }
+    Vector2 MouseWorldPosition { get; set; }
+    bool IsLeftMouseDown { get; set; }
+    bool WasLeftMouseReleased { get; set; }
 }
 ```
 
@@ -261,6 +301,7 @@ public interface ISceneParameters
     IPlayer CurrentTurnPlayer { get; }
     IReadOnlyCollection<IPhysicsBody> Bodies { get; }
     ICueController CueInfo { get; }
+    float TurnTimer { get; } // Exposes remaining turn seconds for the HUD
 }
 ```
 

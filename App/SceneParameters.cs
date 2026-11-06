@@ -18,9 +18,9 @@ namespace BilliardsGame.App
         /// <summary>
         /// Explicit mapper generating unified snapshot interfaces for the underlying architecture.
         /// </summary>
-        /// <param name=""gameManager"">Core state machine managing lifecycle progress.</param>
-        /// <param name=""physicsEngine"">Deterministic spatial integration tracker.</param>
-        /// <param name=""cueController"">Telemetry controller managing active stroke parameters.</param>
+        /// <param name="gameManager">Core state machine managing lifecycle progress.</param>
+        /// <param name="physicsEngine">Deterministic spatial integration tracker.</param>
+        /// <param name="cueController">Telemetry controller managing active stroke parameters.</param>
         public SceneParameters(IGameManager gameManager, IPhysicsEngine physicsEngine, ICueController cueController)
         {
             _gameManager = gameManager;
@@ -48,6 +48,9 @@ namespace BilliardsGame.App
         
         /// <inheritdoc />
         public ICueController CueInfo => _cueController;
+
+        /// <inheritdoc />
+        public float TurnTimer => _gameManager.RemainingTurnTime;
         
         /// <inheritdoc />
         public IPlayer Player1 => _gameManager.Player1;

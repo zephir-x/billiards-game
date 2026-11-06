@@ -16,6 +16,7 @@
     <ProjectReference Include="..\Interfaces\BilliardsGame.Interfaces.csproj" />
     <ProjectReference Include="..\Physics\BilliardsGame.Physics.csproj" />
     <ProjectReference Include="..\Core\BilliardsGame.Core.csproj" />
+    <ProjectReference Include="..\Network\BilliardsGame.Network.csproj" />
   </ItemGroup>
 
   <ItemGroup>

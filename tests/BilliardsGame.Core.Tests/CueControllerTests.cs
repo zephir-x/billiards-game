@@ -12,6 +12,9 @@ namespace BilliardsGame.Core.Tests
     /// </summary>
     public class CueControllerTests
     {
+        /// <summary>
+        /// Validates that aim calculation derives a normalized directional vector pointing from mouse towards cue ball.
+        /// </summary>
         [Fact]
         public void UpdateAim_CalculatesCorrectNormalizedVector()
         {
@@ -26,6 +29,9 @@ namespace BilliardsGame.Core.Tests
             Assert.Equal(0f, controller.CueDirection.Y, 4);
         }
 
+        /// <summary>
+        /// Validates that coincident coordinates for aim resolve to zero vector without numerical divergence.
+        /// </summary>
         [Fact]
         public void UpdateAim_ZeroDistance_HandlesGracefully()
         {
@@ -38,6 +44,9 @@ namespace BilliardsGame.Core.Tests
             Assert.Equal(Vector2.Zero, controller.CueDirection);
         }
 
+        /// <summary>
+        /// Validates linear shot charge progression and triggers thermal overheat lockout at maximum capacity.
+        /// </summary>
         [Fact]
         public void ChargeShot_IncreasesPowerLinearly_AndEntersOverheatOnMax()
         {
@@ -65,6 +74,30 @@ namespace BilliardsGame.Core.Tests
             Assert.Equal(0.935f, controller.Power, 4);
         }
 
+        /// <summary>
+        /// Validates that calling ResetCharge on an overheated cue immediately dissipates stored energy and revokes the overheat lockout.
+        /// </summary>
+        [Fact]
+        public void ResetCharge_WhenOverheated_ResetsPowerAndClearsOverheat()
+        {
+            var controller = new CueController();
+            
+            // Charge cue to maximum potential to force thermal overheat condition.
+            controller.ChargeShot(1.0f);
+            Assert.True(controller.IsOverheated);
+            Assert.Equal(1.0f, controller.Power);
+
+            // Execute explicit reset sequence.
+            controller.ResetCharge();
+
+            // Validate that both thermal penalty and accumulated power have been completely wiped.
+            Assert.False(controller.IsOverheated);
+            Assert.Equal(0.0f, controller.Power);
+        }
+
+        /// <summary>
+        /// Validates that executing a shot applies linear impulse to the physical ball entity and resets potential to zero.
+        /// </summary>
         [Fact]
         public void ExecuteShot_AppliesCorrectImpulse_AndResetsPower()
         {
@@ -72,10 +105,9 @@ namespace BilliardsGame.Core.Tests
             var ballMock = new Mock<IPhysicsBody>();
             controller.UpdateAim(new Vector2(10, 0), new Vector2(0, 0)); 
             
-            controller.ChargeShot(0.5f);
-            
             // Executes targeted strike logic projecting exact geometric calculations natively interfacing with abstract rigid definitions mimicking cue strikes exactly.
             Vector2 expectedImpulse = new Vector2(250f, 0f);
+            controller.ChargeShot(0.5f);
             
             controller.ExecuteShot(ballMock.Object);
             

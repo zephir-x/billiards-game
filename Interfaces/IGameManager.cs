@@ -6,6 +6,7 @@ namespace BilliardsGame.Interfaces
 {
     /// <summary>
     /// Acts as the core domain supervisor managing the game states, rule validators, and turn progression.
+    /// Encapsulates all stateful authority governing match rules, player switching, and foul adjudication.
     /// </summary>
     public interface IGameManager
     {
@@ -15,7 +16,7 @@ namespace BilliardsGame.Interfaces
         GameState CurrentState { get; }
 
         /// <summary>
-        /// Represents the player whose turn is currently active.
+        /// Represents the player entity whose turn is currently active.
         /// </summary>
         IPlayer ActivePlayer { get; }
 
@@ -25,15 +26,21 @@ namespace BilliardsGame.Interfaces
         IPlayer? Winner { get; }
         
         /// <summary>
-        /// Read-only access to the first player entity.
+        /// Read-only access to the primary player entity.
         /// </summary>
         IPlayer Player1 { get; }
 
         /// <summary>
-        /// Read-only access to the second player entity.
+        /// Read-only access to the secondary opponent player entity.
         /// </summary>
         IPlayer Player2 { get; }
         
+        /// <summary>
+        /// Explicit countdown duration in seconds allocated for the active participant to execute their aiming or ball placement decision.
+        /// Reaching zero triggers an automatic timeout foul and transfers table control to the opponent.
+        /// </summary>
+        float RemainingTurnTime { get; }
+
         /// <summary>
         /// High-level text payload of the active notification banner.
         /// </summary>
@@ -55,52 +62,58 @@ namespace BilliardsGame.Interfaces
         IPocket? TargetPocket { get; }
 
         /// <summary>
-        /// Assigns the designated pocket for the 8-ball validation rule.
+        /// Event invoked when a scratch foul occurs, requesting cue ball respawn via ball-in-hand placement.
         /// </summary>
-        /// <param name="pocket">The pocket instance selected through the provider UI.</param>
-        void SelectTargetPocket(IPocket pocket);
+        event Action? OnScratchFoul;
 
         /// <summary>
-        /// Scans playfield constraints querying the physics engine to determine if cursor coordinates represent a strictly valid Ball-in-Hand placement.
+        /// Event invoked when the cue ball is placed in the designated position.
         /// </summary>
-        /// <param name="position">Checked world-space coordinates.</param>
-        /// <returns>True if the coordinates do not overlap cushions or other balls, otherwise false.</returns>
-        bool IsValidCueBallPlacement(Vector2 position);
+        event Action<Vector2>? OnPlaceCueBall;
 
         /// <summary>
-        /// Advances the logical conditions, validates states and processes sequential rule pipelines.
+        /// Event invoked when match-ending conditions are met and a victor is established.
         /// </summary>
-        /// <param name="deltaTime">Time passed since the last logical frame.</param>
+        event Action? OnGameOver;
+
+        /// <summary>
+        /// Event invoked when a notification banner is broadcast, passing its semantic category to downstream listeners.
+        /// </summary>
+        event Action<NotificationType>? OnNotificationEvent;
+
+        /// <summary>
+        /// Propagates frame delta updates through domain logic, ticking active banners, evaluating decision timers, and triggering timeout fouls.
+        /// </summary>
+        /// <param name="deltaTime">Time elapsed in seconds since the previous update frame.</param>
         void UpdateLogic(float deltaTime);
 
         /// <summary>
-        /// Refreshes all internal state parameters enforcing a fresh match.
+        /// Resets scoring, cleans up previous state structures, and initializes a fresh match instance.
         /// </summary>
         void StartGame();
 
         /// <summary>
-        /// Unconditionally terminates the active player's turn and yields control.
+        /// Concludes the current turn sequence and transfers table authority to the opposing participant.
         /// </summary>
         void EndTurn();
 
         /// <summary>
-        /// Dispatched synchronously when a foul condition results in standard cue ball scratch.
+        /// Positions the cue ball during a ball-in-hand phase if spatial boundaries permit placement.
         /// </summary>
-        event Action OnScratchFoul;
+        /// <param name="position">Target 2D coordinates for cue ball placement.</param>
+        void PlaceCueBall(Vector2 position);
 
         /// <summary>
-        /// Dispatched synchronously when the active player places the cue ball on a valid world coordinate.
+        /// Verifies whether the specified coordinates represent a legal cue ball placement without colliding with existing bodies or cushions.
         /// </summary>
-        event Action<Vector2> OnPlaceCueBall;
+        /// <param name="position">Candidate 2D world coordinates to evaluate.</param>
+        /// <returns>True if the position is free of geometric and physical collisions; otherwise false.</returns>
+        bool IsValidCueBallPlacement(Vector2 position);
 
         /// <summary>
-        /// Dispatched synchronously when terminal game over rule conditions are met. (Win/Lose context held in Winner property).
+        /// Designates the target pocket for an 8-Ball game-winning shot attempt.
         /// </summary>
-        event Action OnGameOver;
-
-        /// <summary>
-        /// Emitted asynchronously when a new banner notification is queued by the semantic domain.
-        /// </summary>
-        event Action<NotificationType> OnNotificationEvent;
+        /// <param name="pocket">The target pocket chosen by the active player.</param>
+        void SelectTargetPocket(IPocket pocket);
     }
 }
