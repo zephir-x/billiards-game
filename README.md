@@ -56,7 +56,7 @@ You don't need any programming knowledge or external runtimes to play the game!
 
 ### Quick Start
 1. **Download:** Go to the [Releases](../../releases) tab of this repository.
-2. **Extract:** Download the latest `2D_Billiards_Game_v1.2.0.zip` (or `BilliardsGame-win-x64.zip`) and extract its contents anywhere on your PC.
+2. **Extract:** Download the latest `2D_Billiards_Game_v1.2.0.zip` and extract its contents anywhere on your PC.
 3. **Play:** Double-click `BilliardsGame.exe` and you are ready to play!
 
 ### Game Modes
